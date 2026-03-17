@@ -125,7 +125,7 @@ def find_room_wall(cx, cy, direction, wall_lines, grid_spacing=17, grid_tol=3.5)
             for j in range(run_start, len(positions)):
                 grid_flags[j] = True
 
-    # After grid run, find the room wall:
+    # After grid detection, find the room wall:
     # 1. First look for a non-grid position with a long-wall pair (> 200pt within 10pt)
     # 2. Fallback: first non-grid position
     best_with_long_pair = None
@@ -138,8 +138,7 @@ def find_room_wall(cx, cy, direction, wall_lines, grid_spacing=17, grid_tol=3.5)
         if best_non_grid is None:
             best_non_grid = i
 
-        # Check if this position has a partner > 200pt within 10pt
-        # Candidate must itself be a real wall (>= 60pt), not a door frame
+        # Check for long-wall pair (corridor wall)
         if positions[i][1] < 60:
             continue
         for j in range(len(positions)):
@@ -152,8 +151,7 @@ def find_room_wall(cx, cy, direction, wall_lines, grid_spacing=17, grid_tol=3.5)
                         best_with_long_pair = i
                     break
 
-    # Prefer the long-wall pair ONLY if it's close to the first non-grid position
-    # (within 30pt). This avoids picking distant walls on the wrong side.
+    # Prefer the long-wall pair if close to first non-grid
     if best_with_long_pair is not None and best_non_grid is not None:
         dist_pair = positions[best_with_long_pair][0]
         dist_first = positions[best_non_grid][0]
