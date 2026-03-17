@@ -9,8 +9,9 @@ import { Plus, Minus, Save, Pencil, Trash2, ChevronLeft, ChevronRight } from "lu
 import { format, addDays, subDays } from "date-fns";
 import { sv } from "date-fns/locale";
 import { useSearchParams } from "next/navigation";
+import { Suspense } from "react";
 
-export default function DashboardPage() {
+function DashboardContent() {
   const { user } = useAuth();
   const searchParams = useSearchParams();
   const initialDate = searchParams.get("date") || format(new Date(), "yyyy-MM-dd");
@@ -268,5 +269,13 @@ export default function DashboardPage() {
         </div>
       </div>
     </AppShell>
+  );
+}
+
+export default function DashboardPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><div className="animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full" /></div>}>
+      <DashboardContent />
+    </Suspense>
   );
 }
