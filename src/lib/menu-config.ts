@@ -68,21 +68,26 @@ export const menuSections: MenuSection[] = [
       },
     ],
   },
-  // --- Add new sections here ---
-  // Example: Material tracking, Customer portal, etc.
-  // {
-  //   id: "material",
-  //   title: "Material",
-  //   items: [
-  //     {
-  //       id: "lager",
-  //       label: "Lagersaldo",
-  //       href: "/material",
-  //       icon: "Package",
-  //       roles: ["worker", "admin"],
-  //     },
-  //   ],
-  // },
+  {
+    id: "rumsyta",
+    title: "Rumsyta-beräkning",
+    items: [
+      {
+        id: "area-upload",
+        label: "Ny beräkning",
+        href: "/area",
+        icon: "Ruler",
+        roles: ["admin"],
+      },
+      {
+        id: "area-jobs",
+        label: "Beräkningar",
+        href: "/area/jobs",
+        icon: "FileStack",
+        roles: ["admin"],
+      },
+    ],
+  },
 ];
 
 /**

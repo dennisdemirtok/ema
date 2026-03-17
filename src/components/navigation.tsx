@@ -12,6 +12,8 @@ import {
   Users,
   FolderOpen,
   Package,
+  Ruler,
+  FileStack,
   Menu,
   X,
   LogOut,
@@ -26,6 +28,8 @@ const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
   Users,
   FolderOpen,
   Package,
+  Ruler,
+  FileStack,
 };
 
 export function Navigation() {
