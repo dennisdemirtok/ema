@@ -79,8 +79,20 @@ export async function POST(request: NextRequest) {
     })
     .eq("id", job.id);
 
-  // TODO: Trigger Python processing pipeline here
-  // For now, the job stays in "processing" status until a processor picks it up
+  // Trigger Python processing in background
+  try {
+    const baseUrl = request.nextUrl.origin;
+    fetch(`${baseUrl}/api/area/process`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: request.headers.get("cookie") || "",
+      },
+      body: JSON.stringify({ job_id: job.id }),
+    }).catch((err) => console.error("Failed to trigger processor:", err));
+  } catch (err) {
+    console.error("Failed to trigger processor:", err);
+  }
 
   return NextResponse.json({
     job: { ...job, original_url: urlData.publicUrl, status: "processing" },

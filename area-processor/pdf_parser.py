@@ -58,7 +58,7 @@ class PDFData:
     text_blocks: list = field(default_factory=list)
     room_labels: list = field(default_factory=list)
     scale: int = DEFAULT_SCALE
-    pts_to_m: float = 0.00352778  # Default for 1:100
+    pts_to_m: float = 0.0352778  # Default for 1:100 (1pt = 0.352778mm * 100 / 1000)
     pdf_path: str = ""  # Store path for rasterization
 
 
@@ -136,7 +136,7 @@ def extract_pdf_data(pdf_path: str, page_num: int = 0) -> PDFData:
 
     # Detect scale
     data.scale = detect_scale(data.text_blocks)
-    data.pts_to_m = 0.352778 / data.scale  # mm per pt / scale
+    data.pts_to_m = 0.352778 * data.scale / 1000  # mm per pt * scale / 1000 → meters
 
     # Identify room labels (text that looks like room names)
     data.room_labels = identify_room_labels(data.text_blocks)

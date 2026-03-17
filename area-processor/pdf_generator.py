@@ -1,36 +1,26 @@
 """
 PDF Result Generator.
-Takes the original PDF and overlays colored room polygons with area labels.
+Takes the original PDF and overlays pink/rosa room polygons with "Undertak X,XX m²" labels.
+Styled to match professional Swedish ceiling plan (undertaksritning) output.
 """
 
 import fitz  # PyMuPDF
 from room_detector import Room
 
 
-# Color palette for rooms (RGBA, alpha 0.3 for transparency)
-ROOM_COLORS = [
-    (0.5, 0.5, 1.0),    # Blue
-    (0.5, 1.0, 0.5),    # Green
-    (1.0, 0.8, 0.4),    # Orange
-    (0.8, 0.5, 1.0),    # Purple
-    (0.4, 0.9, 0.9),    # Cyan
-    (1.0, 0.6, 0.6),    # Red
-    (0.7, 1.0, 0.4),    # Lime
-    (1.0, 0.7, 0.9),    # Pink
-    (0.6, 0.8, 1.0),    # Light blue
-    (1.0, 1.0, 0.5),    # Yellow
-]
-
-OVERLAY_OPACITY = 0.35
-LABEL_FONT_SIZE = 10
-LABEL_COLOR = (0, 0, 0)  # Black text
-LABEL_BG_COLOR = (1, 1, 1)  # White background
+# Pink/Rosa color for all rooms (matches reference style)
+ROOM_FILL_COLOR = (1.0, 0.75, 0.8)  # Pink/rosa
+ROOM_BORDER_COLOR = (0.85, 0.45, 0.55)  # Darker pink for border
+OVERLAY_OPACITY = 0.4
+LABEL_FONT_SIZE = 9
+LABEL_COLOR = (0.1, 0.1, 0.1)  # Near-black text
+AREA_COLOR = (0.15, 0.15, 0.4)  # Dark blue for area numbers
 
 
 def generate_result_pdf(input_path: str, output_path: str, rooms: list,
                         page_num: int = 0) -> str:
     """
-    Generate a result PDF with colored room overlays and area labels.
+    Generate a result PDF with pink room overlays and "Undertak X,XX m²" labels.
 
     Args:
         input_path: Path to original PDF
@@ -44,42 +34,38 @@ def generate_result_pdf(input_path: str, output_path: str, rooms: list,
     doc = fitz.open(input_path)
     page = doc[page_num]
 
-    for i, room in enumerate(rooms):
-        color = ROOM_COLORS[i % len(ROOM_COLORS)]
-
+    for room in rooms:
         if len(room.polygon_pts) < 3:
             continue
 
-        # Draw filled polygon
+        # Draw filled polygon in pink
         points = [fitz.Point(p[0], p[1]) for p in room.polygon_pts]
         shape = page.new_shape()
-
-        # Draw polygon path
         shape.draw_polyline(points + [points[0]])
         shape.finish(
-            color=color,
-            fill=color,
+            color=ROOM_BORDER_COLOR,
+            fill=ROOM_FILL_COLOR,
             fill_opacity=OVERLAY_OPACITY,
             width=0.5,
-            stroke_opacity=0.7,
+            stroke_opacity=0.6,
         )
         shape.commit()
 
-        # Add area label at centroid
+        # Add label: "Undertak\nXX,XX m²" at centroid
         cx, cy = room.centroid_pts
-        area_text = f"{room.area_m2:.2f} m²"
+
+        # Format area with comma (Swedish format)
+        area_str = f"{room.area_m2:.2f}".replace(".", ",")
+
         name_text = room.name or ""
+        undertak_text = "Undertak"
+        area_text = f"{area_str} m²"
 
-        # Calculate label position and size
-        if name_text:
-            full_text = f"{name_text}\n{area_text}"
-        else:
-            full_text = area_text
-
-        # Create label background
-        font_size = LABEL_FONT_SIZE
-        text_width = max(len(name_text), len(area_text)) * font_size * 0.5
-        text_height = font_size * (2.5 if name_text else 1.5)
+        # Calculate label dimensions
+        lines_count = 3 if name_text else 2
+        max_text = max(len(undertak_text), len(area_text), len(name_text) if name_text else 0)
+        text_width = max(max_text * LABEL_FONT_SIZE * 0.52, 50)
+        text_height = LABEL_FONT_SIZE * (lines_count + 0.8)
 
         label_rect = fitz.Rect(
             cx - text_width / 2,
@@ -88,48 +74,50 @@ def generate_result_pdf(input_path: str, output_path: str, rooms: list,
             cy + text_height / 2,
         )
 
-        # White background with slight transparency
+        # White label background
         bg_shape = page.new_shape()
         bg_shape.draw_rect(label_rect)
         bg_shape.finish(
-            color=(0.3, 0.3, 0.3),
+            color=(0.7, 0.7, 0.7),
             fill=(1, 1, 1),
-            fill_opacity=0.85,
+            fill_opacity=0.9,
             width=0.3,
         )
         bg_shape.commit()
 
-        # Add text
-        if name_text:
-            # Room name (bold)
-            name_point = fitz.Point(cx - text_width / 2 + 4, cy - 2)
-            page.insert_text(
-                name_point,
-                name_text,
-                fontsize=font_size,
-                fontname="helv",
-                color=(0, 0, 0),
-            )
+        # Text positioning
+        left_x = cx - text_width / 2 + 3
+        current_y = cy - text_height / 2 + LABEL_FONT_SIZE + 1
 
-            # Area value
-            area_point = fitz.Point(cx - text_width / 2 + 4, cy + font_size + 2)
+        if name_text:
+            # Room name (e.g., "Kontor A")
             page.insert_text(
-                area_point,
-                area_text,
-                fontsize=font_size - 1,
+                fitz.Point(left_x, current_y),
+                name_text,
+                fontsize=LABEL_FONT_SIZE - 1,
                 fontname="helv",
-                color=(0.2, 0.2, 0.5),
+                color=LABEL_COLOR,
             )
-        else:
-            # Just area
-            area_point = fitz.Point(cx - text_width / 2 + 4, cy + font_size / 2)
-            page.insert_text(
-                area_point,
-                area_text,
-                fontsize=font_size,
-                fontname="helv",
-                color=(0, 0, 0),
-            )
+            current_y += LABEL_FONT_SIZE + 1
+
+        # "Undertak"
+        page.insert_text(
+            fitz.Point(left_x, current_y),
+            undertak_text,
+            fontsize=LABEL_FONT_SIZE,
+            fontname="hebo",  # Helvetica Bold
+            color=LABEL_COLOR,
+        )
+        current_y += LABEL_FONT_SIZE + 1
+
+        # Area value (e.g., "15,75 m²")
+        page.insert_text(
+            fitz.Point(left_x, current_y),
+            area_text,
+            fontsize=LABEL_FONT_SIZE,
+            fontname="helv",
+            color=AREA_COLOR,
+        )
 
     doc.save(output_path)
     doc.close()
