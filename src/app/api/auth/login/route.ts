@@ -33,14 +33,14 @@ export async function POST(request: NextRequest) {
     secure: false,
     sameSite: "lax",
     path: "/",
-    maxAge: 3600,
+    maxAge: 60 * 60 * 24 * 30, // 30 dagar
   });
   cookieStore.set("sb-refresh-token", data.session!.refresh_token, {
     httpOnly: true,
     secure: false,
     sameSite: "lax",
     path: "/",
-    maxAge: 604800,
+    maxAge: 60 * 60 * 24 * 30, // 30 dagar
   });
 
   return NextResponse.json({ user: profile || { id: data.user.id, email: data.user.email, name: email, role: "worker" } });
