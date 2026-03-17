@@ -3,7 +3,7 @@ Room Detection using vector ray-casting with consecutive-spacing grid detection.
 
 For each room label, casts rays in 4 directions.
 Detects ceiling grid by finding runs of consecutive ~17pt spacing.
-The first line after the grid run is the room wall.
+Uses wall-pair detection and boundary analysis to find actual room walls.
 """
 
 from typing import Optional, List, Tuple
@@ -65,21 +65,21 @@ def find_all_in_direction(cx, cy, direction, wall_lines, min_dist=3, max_dist=15
     return results
 
 
-def find_room_wall(cx, cy, direction, wall_lines, grid_spacing=17, grid_tol=3.5):
+def find_room_wall(cx, cy, direction, wall_lines, grid_spacing=17, grid_tol=2.5):
     """
     Find the room wall using consecutive-spacing grid detection.
 
-    Strategy:
-    1. Get all lines sorted by distance, deduplicate positions
-    2. Calculate consecutive spacings between positions
-    3. Find the longest run of ~17pt spacings = grid
-    4. The first line after the grid run is the room wall
+    1. Deduplicate positions, calculate spacings
+    2. Find grid runs (2+ consecutive ~17pt spacings)
+    3. Check if last grid position is actually a wall (3 rules)
+    4. Among non-grid: prefer positions with long-wall pairs
+    5. Fallback: first non-grid position
     """
     raw = find_all_in_direction(cx, cy, direction, wall_lines, min_dist=3)
     if not raw:
         return 1500
 
-    # Deduplicate: merge lines within 0.5pt, keep max length per position
+    # Deduplicate: merge lines within 0.5pt, keep max length
     positions = []  # [(dist, max_length)]
     for dist, length in raw:
         merged = False
@@ -99,13 +99,13 @@ def find_room_wall(cx, cy, direction, wall_lines, grid_spacing=17, grid_tol=3.5)
     # Calculate consecutive spacings
     spacings = []
     for i in range(1, len(positions)):
-        spacings.append(positions[i][0] - positions[i-1][0])
+        spacings.append(positions[i][0] - positions[i - 1][0])
 
     # Find runs of ~17pt spacings (2+ consecutive)
     is_grid_spacing = [abs(s - grid_spacing) < grid_tol for s in spacings]
 
-    # Mark positions that are part of grid runs
     grid_flags = [False] * len(positions)
+    grid_runs = []  # [(start_pos_idx, end_pos_idx)]
 
     run_start = None
     for i in range(len(is_grid_spacing)):
@@ -116,29 +116,101 @@ def find_room_wall(cx, cy, direction, wall_lines, grid_spacing=17, grid_tol=3.5)
             if run_start is not None:
                 run_len = i - run_start
                 if run_len >= 2:
+                    grid_runs.append((run_start, i))  # positions run_start..i
                     for j in range(run_start, i + 1):
                         grid_flags[j] = True
                 run_start = None
     if run_start is not None:
         run_len = len(is_grid_spacing) - run_start
         if run_len >= 2:
+            grid_runs.append((run_start, len(positions) - 1))
             for j in range(run_start, len(positions)):
                 grid_flags[j] = True
 
-    # After grid detection, find the room wall:
-    # 1. First look for a non-grid position with a long-wall pair (> 200pt within 10pt)
-    # 2. Fallback: first non-grid position
-    best_with_long_pair = None
-    best_non_grid = None
+    # ── Check if the LAST position of the FIRST grid run is actually a wall ──
+    last_grid_idx = grid_runs[0][1] if grid_runs else None
+
+    if last_grid_idx is not None:
+        d_last = positions[last_grid_idx][0]
+        l_last = positions[last_grid_idx][1]
+
+        # Rule A: tight pair (< 2pt) with non-grid partner → wall double
+        # Return the partner (outer face)
+        for j in range(len(positions)):
+            if j == last_grid_idx or grid_flags[j]:
+                continue
+            gap = abs(d_last - positions[j][0])
+            if 0.1 < gap < 2.0:
+                # Wall pair found — return the non-grid partner
+                grid_flags[last_grid_idx] = False
+                # Prefer the partner (slightly farther = outer face of wall)
+                return max(d_last, positions[j][0])
+
+        # Rule B: pair (< 10pt) where partner is a long wall (> 200pt)
+        # → structural wall pair with corridor/building wall
+        for j in range(len(positions)):
+            if j == last_grid_idx:
+                continue
+            gap = abs(d_last - positions[j][0])
+            if 0.5 < gap < 10:
+                longer = max(l_last, positions[j][1])
+                if longer > 200:
+                    grid_flags[last_grid_idx] = False
+                    return d_last  # Return the grid position (inner face)
+
+        # Rule C: huge gap after last grid position (> 3x grid_spacing)
+        # → wall at boundary of building/floor
+        if last_grid_idx < len(positions) - 1:
+            next_gap = positions[last_grid_idx + 1][0] - d_last
+            if next_gap > grid_spacing * 3:
+                grid_flags[last_grid_idx] = False
+                return d_last
+        elif last_grid_idx == len(positions) - 1:
+            # It's the very last position — must be the wall
+            return d_last
+
+    # ── Find best non-grid position ──
+    best_with_long_pair = None  # Position with corridor wall partner (> 200pt)
+    best_non_grid = None        # First non-grid position
+
+    # First pass: find first non-grid position
+    for i in range(len(positions)):
+        if not grid_flags[i]:
+            best_non_grid = i
+            break
+
+    if best_non_grid is None:
+        return positions[-1][0]
+
+    first_non_grid_dist = positions[best_non_grid][0]
+
+    # Search within 30pt of the first non-grid position
+    search_limit = first_non_grid_dist + 30
+    last_pair_inner = None  # Inner face of the last wall pair in the cluster
 
     for i in range(len(positions)):
         if grid_flags[i]:
             continue
+        if positions[i][0] > search_limit:
+            break
 
-        if best_non_grid is None:
-            best_non_grid = i
+        # Check for wall pairs (another position within 0.5-8pt)
+        # Both members must be >= 60pt (skip door frames)
+        if positions[i][1] < 60:
+            continue  # Skip door frames for pair detection
+        for j in range(len(positions)):
+            if i == j:
+                continue
+            if positions[j][1] < 40:  # Partner can be slightly shorter
+                continue
+            gap = abs(positions[i][0] - positions[j][0])
+            if 0.5 < gap < 8:
+                inner = min(positions[i][0], positions[j][0])
+                if last_pair_inner is None or inner > last_pair_inner:
+                    last_pair_inner = inner
+                break
 
-        # Check for long-wall pair (corridor wall)
+        # Check for long-wall pair (corridor wall > 200pt within 10pt)
         if positions[i][1] < 60:
             continue
         for j in range(len(positions)):
@@ -151,17 +223,18 @@ def find_room_wall(cx, cy, direction, wall_lines, grid_spacing=17, grid_tol=3.5)
                         best_with_long_pair = i
                     break
 
-    # Prefer the long-wall pair if close to first non-grid
-    if best_with_long_pair is not None and best_non_grid is not None:
-        dist_pair = positions[best_with_long_pair][0]
-        dist_first = positions[best_non_grid][0]
-        if dist_pair <= dist_first * 1.5 and abs(dist_pair - dist_first) < 30:
-            return dist_pair
+    # Priority 1: Long-wall pair (corridor wall nearby)
+    if best_with_long_pair is not None:
+        return positions[best_with_long_pair][0]
 
-    if best_non_grid is not None:
-        return positions[best_non_grid][0]
+    # Priority 2: Last wall pair in the nearby cluster
+    if last_pair_inner is not None and last_pair_inner > first_non_grid_dist + 3:
+        return last_pair_inner
 
-    # All positions are grid
+    # Priority 3: First non-grid position
+    return first_non_grid_dist
+
+    # All positions are grid — return the last one
     return positions[-1][0]
 
 
