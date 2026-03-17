@@ -1,10 +1,12 @@
 """
-Room Detection using flood-fill on rasterized PDF.
-Identifies enclosed regions (rooms) and maps them back to vector coordinates.
+Room Detection using watershed segmentation on rasterized PDF.
+Uses PyMuPDF's native rasterization, extracts wall-only features,
+then applies marker-controlled watershed from room label positions.
 """
 
 from typing import Optional
 
+import fitz  # PyMuPDF
 import cv2
 import numpy as np
 from scipy.spatial import cKDTree
@@ -15,6 +17,11 @@ from config import (
     RASTER_DPI, MIN_ROOM_AREA_M2, MAX_ROOM_AREA_M2,
     MORPH_KERNEL_SIZE, VECTOR_SNAP_TOLERANCE
 )
+
+# DPI for room detection (lower = faster, walls merge better)
+DETECT_DPI = 150
+# Minimum wall segment length in PDF points for line-kernel extraction
+WALL_LINE_MIN_PT = 15
 
 
 @dataclass
@@ -29,118 +36,148 @@ class Room:
     source: str = "auto"
 
 
-def rasterize_walls(pdf_data: PDFData, dpi: int = RASTER_DPI) -> tuple:
+def rasterize_and_extract_walls(pdf_data, dpi=DETECT_DPI):
     """
-    Create a binary image of walls from vector data.
-    Returns: (binary_image, scale_x, scale_y) where scale maps pixels to PDF points.
+    Rasterize PDF and extract wall-only features using morphological line detection.
+
+    Strategy:
+    1. Render PDF at target DPI
+    2. Threshold to get all dark content (walls + text + symbols)
+    3. Use morphological opening with horizontal/vertical line kernels
+       to keep only long line features (walls) and remove text/symbols
+    4. Dilate walls slightly for connectivity
+
+    Returns: (walls_mask, rooms_mask, gray_image, zoom_factor)
     """
-    # Calculate pixel dimensions
-    pts_per_inch = 72
-    scale = dpi / pts_per_inch
-    width_px = int(pdf_data.page_width * scale)
-    height_px = int(pdf_data.page_height * scale)
+    doc = fitz.open(pdf_data.pdf_path)
+    page = doc[0]
 
-    # Create blank white image
-    img = np.ones((height_px, width_px), dtype=np.uint8) * 255
+    zoom = dpi / 72.0
+    mat = fitz.Matrix(zoom, zoom)
+    pix = page.get_pixmap(matrix=mat, alpha=False)
 
-    # Draw wall lines as black
-    for line in pdf_data.wall_lines:
-        x0 = int(line.x0 * scale)
-        y0 = int(line.y0 * scale)
-        x1 = int(line.x1 * scale)
-        y1 = int(line.y1 * scale)
-        thickness = max(2, int(line.width * scale * 1.5))
-        cv2.line(img, (x0, y0), (x1, y1), 0, thickness)
+    img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, 3)
+    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
 
-    # Morphological closing to seal micro-gaps
-    kernel = np.ones((MORPH_KERNEL_SIZE, MORPH_KERNEL_SIZE), np.uint8)
-    img = cv2.morphologyEx(img, cv2.MORPH_CLOSE, kernel)
+    # Threshold: dark pixels = walls/lines/text
+    _, all_dark = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY_INV)
 
-    return img, scale
+    # Extract only long horizontal and vertical line features (walls)
+    # This removes text, symbols, and short details
+    wall_len_px = int(WALL_LINE_MIN_PT * zoom)
+
+    h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (wall_len_px, 1))
+    h_walls = cv2.morphologyEx(all_dark, cv2.MORPH_OPEN, h_kernel)
+
+    v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, wall_len_px))
+    v_walls = cv2.morphologyEx(all_dark, cv2.MORPH_OPEN, v_kernel)
+
+    walls = cv2.bitwise_or(h_walls, v_walls)
+
+    # Slightly thicken walls for better connectivity
+    walls = cv2.dilate(walls, np.ones((3, 3), np.uint8), iterations=1)
+
+    rooms = cv2.bitwise_not(walls)
+
+    doc.close()
+    return walls, rooms, gray, zoom
 
 
-def flood_fill_rooms(binary_img: np.ndarray, pdf_data: PDFData, px_scale: float) -> list:
+def find_seed_point(binary_img, center_x, center_y, search_radius=50):
     """
-    Use flood-fill from room label positions to detect rooms.
-    Returns list of (contour_pixels, label) tuples.
+    Find a white (open space) pixel near the given center point.
+    Room labels often sit on top of their own text (dark pixels),
+    so we search outward to find nearby open space.
     """
     h, w = binary_img.shape
-    rooms_found = []
-    filled = binary_img.copy()
-    used_mask = np.zeros((h, w), dtype=np.uint8)
 
-    # Use room labels as seed points
+    if (0 <= center_x < w and 0 <= center_y < h
+            and binary_img[center_y, center_x] == 255):
+        return center_x, center_y
+
+    # Spiral search outward
+    for radius in range(1, search_radius + 1):
+        for dx in range(-radius, radius + 1):
+            for dy in [-radius, radius]:
+                nx, ny = center_x + dx, center_y + dy
+                if 0 <= nx < w and 0 <= ny < h and binary_img[ny, nx] == 255:
+                    return nx, ny
+        for dy in range(-radius + 1, radius):
+            for dx in [-radius, radius]:
+                nx, ny = center_x + dx, center_y + dy
+                if 0 <= nx < w and 0 <= ny < h and binary_img[ny, nx] == 255:
+                    return nx, ny
+
+    return None
+
+
+def watershed_rooms(walls, rooms_img, pdf_data, px_scale):
+    """
+    Use marker-controlled watershed to segment rooms.
+
+    Strategy:
+    - Each room label becomes a seed marker
+    - Wall pixels become barrier markers (prevents expansion through walls)
+    - Watershed expands each seed region until it hits walls or another region
+    - This naturally handles door openings (narrow passages between rooms)
+
+    Returns: list of (contour, label, area_m2) tuples
+    """
+    h, w = walls.shape
+
+    # Initialize markers
+    markers = np.zeros((h, w), dtype=np.int32)
+
+    # Wall pixels = barrier marker (id=1)
+    markers[walls > 0] = 1
+
+    # Place room label seeds
+    marker_id = 2
+    marker_map = {}  # id -> TextBlock label
+    search_radius = int(20 * px_scale)
+
     for label in pdf_data.room_labels:
         cx = int(label.center[0] * px_scale)
         cy = int(label.center[1] * px_scale)
+        seed = find_seed_point(rooms_img, cx, cy, search_radius)
+        if seed:
+            sx, sy = seed
+            if markers[sy, sx] == 0:  # not on a wall
+                markers[sy, sx] = marker_id
+                marker_map[marker_id] = label
+                marker_id += 1
 
-        # Ensure within bounds
-        if cx < 0 or cx >= w or cy < 0 or cy >= h:
-            continue
+    # Watershed: walls image as gradient (high at walls, low at open space)
+    gradient = cv2.cvtColor(walls, cv2.COLOR_GRAY2BGR)
+    cv2.watershed(gradient, markers)
 
-        # Skip if already filled or on a wall
-        if used_mask[cy, cx] > 0 or filled[cy, cx] == 0:
-            continue
-
-        # Flood fill
-        mask = np.zeros((h + 2, w + 2), dtype=np.uint8)
-        _, _, flood_mask, _ = cv2.floodFill(
-            filled.copy(), mask, (cx, cy), 128,
-            loDiff=0, upDiff=0
-        )
-
-        # Extract filled region
-        region = (flood_mask[1:-1, 1:-1] == 1).astype(np.uint8) * 255
-
-        # Skip tiny or huge regions
+    # Extract results
+    results = []
+    for mid, label in marker_map.items():
+        region = (markers == mid).astype(np.uint8) * 255
         pixel_area = cv2.countNonZero(region)
-        if pixel_area < 100:
+        area_m2 = pixel_area * (pdf_data.pts_to_m ** 2) / (px_scale ** 2)
+
+        if area_m2 < MIN_ROOM_AREA_M2 or area_m2 > MAX_ROOM_AREA_M2:
             continue
 
-        # Find contours
+        # Extract contour
         contours, _ = cv2.findContours(region, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if contours:
             largest = max(contours, key=cv2.contourArea)
-            rooms_found.append((largest, label))
-            cv2.drawContours(used_mask, [largest], -1, 255, -1)
+            results.append((largest, label, area_m2))
 
-    # Also try flood-fill from grid points for unlabeled rooms
-    step = int(50 * px_scale)  # ~50pt grid
-    for y in range(step, h - step, step):
-        for x in range(step, w - step, step):
-            if used_mask[y, x] > 0 or filled[y, x] == 0:
-                continue
-
-            mask = np.zeros((h + 2, w + 2), dtype=np.uint8)
-            _, _, flood_mask, _ = cv2.floodFill(
-                filled.copy(), mask, (x, y), 128,
-                loDiff=0, upDiff=0
-            )
-
-            region = (flood_mask[1:-1, 1:-1] == 1).astype(np.uint8) * 255
-            pixel_area = cv2.countNonZero(region)
-            if pixel_area < 100:
-                continue
-
-            contours, _ = cv2.findContours(region, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            if contours:
-                largest = max(contours, key=cv2.contourArea)
-                rooms_found.append((largest, None))
-                cv2.drawContours(used_mask, [largest], -1, 255, -1)
-
-    return rooms_found
+    return results
 
 
-def snap_contour_to_vectors(contour_px: np.ndarray, pdf_data: PDFData,
-                            px_scale: float) -> list:
-    """
-    Snap pixel-based contour points to nearest vector wall coordinates.
-    This converts approximate pixel contours to exact vector polygons.
-    """
+def snap_contour_to_vectors(contour_px, pdf_data, px_scale):
+    """Snap pixel-based contour points to nearest vector wall coordinates."""
+    epsilon = 2.0 * px_scale
+    simplified = cv2.approxPolyDP(contour_px, epsilon, True)
+
     if len(pdf_data.wall_lines) == 0:
-        # No walls to snap to — just convert pixel coords to PDF coords
         pts = []
-        for point in contour_px.reshape(-1, 2):
+        for point in simplified.reshape(-1, 2):
             pts.append((point[0] / px_scale, point[1] / px_scale))
         return pts
 
@@ -149,128 +186,109 @@ def snap_contour_to_vectors(contour_px: np.ndarray, pdf_data: PDFData,
     for line in pdf_data.wall_lines:
         wall_points.append([line.x0, line.y0])
         wall_points.append([line.x1, line.y1])
-    wall_tree = cKDTree(np.array(wall_points))
-
-    # Simplify contour to reduce points
-    epsilon = 2.0 * px_scale
-    simplified = cv2.approxPolyDP(contour_px, epsilon, True)
+    wall_arr = np.array(wall_points)
+    wall_tree = cKDTree(wall_arr)
 
     snapped = []
     for point in simplified.reshape(-1, 2):
-        # Convert pixel to PDF coordinates
         pdf_x = point[0] / px_scale
         pdf_y = point[1] / px_scale
 
-        # Find nearest wall point
         dist, idx = wall_tree.query([pdf_x, pdf_y])
 
         if dist < VECTOR_SNAP_TOLERANCE:
-            # Snap to wall point
-            snapped.append(tuple(wall_points[idx]))
+            snapped.append(tuple(wall_arr[idx]))
         else:
-            # Keep original (converted) point
             snapped.append((pdf_x, pdf_y))
 
     return snapped
 
 
-def calculate_area(polygon_pts: list, pts_to_m: float) -> float:
-    """
-    Calculate room area in square meters using Shapely (Shoelace formula).
-    """
+def calculate_area(polygon_pts, pts_to_m):
+    """Calculate room area in m2 using Shapely (Shoelace formula)."""
     if len(polygon_pts) < 3:
         return 0.0
-
     try:
         poly = Polygon(polygon_pts)
         if not poly.is_valid:
             poly = poly.buffer(0)
-        area_pts2 = poly.area
-        area_m2 = area_pts2 * (pts_to_m ** 2)
-        return round(area_m2, 2)
+        return round(poly.area * (pts_to_m ** 2), 2)
     except Exception:
         return 0.0
 
 
-def match_room_name(polygon_pts: list, text_blocks: list) -> Optional[str]:
-    """
-    Find the room name by checking which text block falls inside the polygon.
-    Uses point-in-polygon test.
-    """
+def match_room_name(polygon_pts, text_blocks):
+    """Find room name by point-in-polygon test on text blocks."""
     if len(polygon_pts) < 3:
         return None
-
     try:
         poly = Polygon(polygon_pts)
         if not poly.is_valid:
             poly = poly.buffer(0)
-
         for tb in text_blocks:
-            point = Point(tb.center)
-            if poly.contains(point):
+            if poly.contains(Point(tb.center)):
                 return tb.text
     except Exception:
         pass
-
     return None
 
 
-def detect_rooms(pdf_data: PDFData) -> list:
+def detect_rooms(pdf_data):
     """
     Main room detection pipeline.
-    Returns list of Room objects with names and areas.
+    1. Rasterize PDF and extract wall-only features
+    2. Watershed segmentation from room labels
+    3. Snap contours to vector coordinates
+    4. Calculate areas
     """
-    # Step 1: Rasterize walls
-    binary_img, px_scale = rasterize_walls(pdf_data)
+    # Step 1: Rasterize and extract walls
+    print("    Rasterizing PDF and extracting walls...")
+    walls, rooms_img, gray, px_scale = rasterize_and_extract_walls(pdf_data)
+    h, w = walls.shape
+    print(f"    Image: {w}x{h} px (DPI={DETECT_DPI})")
 
-    # Step 2: Flood-fill to find rooms
-    raw_rooms = flood_fill_rooms(binary_img, pdf_data, px_scale)
+    # Step 2: Watershed segmentation
+    print("    Running watershed segmentation...")
+    raw_rooms = watershed_rooms(walls, rooms_img, pdf_data, px_scale)
+    print(f"    Raw candidates: {len(raw_rooms)}")
 
     # Step 3: Process each room
     rooms = []
-    for contour, label in raw_rooms:
-        # Snap to vector coordinates
+    for contour, label, ws_area in raw_rooms:
         polygon_pts = snap_contour_to_vectors(contour, pdf_data, px_scale)
 
         if len(polygon_pts) < 3:
             continue
 
-        # Calculate area
-        area_m2 = calculate_area(polygon_pts, pdf_data.pts_to_m)
+        # Use watershed area (more accurate than polygon area for irregular shapes)
+        area_m2 = ws_area
 
-        # Filter by area
+        # Also compute polygon area as cross-check
+        poly_area = calculate_area(polygon_pts, pdf_data.pts_to_m)
+
         if area_m2 < MIN_ROOM_AREA_M2 or area_m2 > MAX_ROOM_AREA_M2:
             continue
 
-        # Match room name
-        name = None
-        if label:
-            name = label.text
-        else:
-            name = match_room_name(polygon_pts, pdf_data.room_labels)
+        name = label.text if label else match_room_name(polygon_pts, pdf_data.room_labels)
 
-        # Calculate centroid
+        # Centroid
         try:
             poly = Polygon(polygon_pts)
             centroid = (poly.centroid.x, poly.centroid.y)
         except Exception:
             centroid = polygon_pts[0] if polygon_pts else (0, 0)
 
-        # Convert polygon to real-world meters
-        polygon_m = [
-            (p[0] * pdf_data.pts_to_m, p[1] * pdf_data.pts_to_m)
-            for p in polygon_pts
-        ]
+        # Convert to meters
+        polygon_m = [(p[0] * pdf_data.pts_to_m, p[1] * pdf_data.pts_to_m) for p in polygon_pts]
 
-        room = Room(
+        rooms.append(Room(
             name=name,
             polygon_pts=polygon_pts,
             polygon_m=polygon_m,
-            area_m2=area_m2,
+            area_m2=round(area_m2, 2),
             centroid_pts=centroid,
-            confidence=0.9 if label else 0.7,
+            confidence=0.85 if label else 0.6,
             source="auto"
-        )
-        rooms.append(room)
+        ))
 
     return rooms
