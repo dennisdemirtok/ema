@@ -33,7 +33,7 @@ export default function AdminPage() {
 
     try {
       const [usersRes, weekRes, monthRes] = await Promise.all([
-        fetch("/api/admin/users?role=worker&is_active=true"),
+        fetch("/api/admin/users?is_active=true"),
         fetch(`/api/entries?date_from=${weekStart}&date_to=${weekEnd}&fields=user_id,hours,date`),
         fetch(`/api/entries?date_from=${monthStart}&date_to=${monthEnd}&fields=user_id,hours`),
       ]);

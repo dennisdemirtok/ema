@@ -42,18 +42,19 @@ export function Navigation() {
 
   return (
     <>
-      {/* Mobile header */}
+      {/* Top header */}
       <header className="fixed top-0 left-0 right-0 z-50 bg-slate-900 text-white h-14 flex items-center px-4 shadow-lg border-b border-slate-800">
+        {/* Hamburger - only on mobile */}
         <button
           onClick={() => setOpen(!open)}
-          className="p-2 -ml-2 rounded-lg hover:bg-slate-800 transition-colors"
+          className="p-2 -ml-2 rounded-lg hover:bg-slate-800 transition-colors md:hidden"
           aria-label="Meny"
         >
           {open ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
         </button>
-        <h1 className="ml-3 font-semibold text-lg">Tidrapport</h1>
+        <h1 className="ml-3 md:ml-0 md:pl-72 font-semibold text-lg">Tidrapport</h1>
         <div className="ml-auto flex items-center gap-2">
-          <span className="text-sm text-slate-300">{user.name}</span>
+          <span className="text-sm text-slate-300 hidden sm:inline">{user.name}</span>
           <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-indigo-500 flex items-center justify-center text-xs font-bold text-white">
             {initials}
           </div>
