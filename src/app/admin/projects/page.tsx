@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { AppShell } from "@/components/app-shell";
 import { useAuth } from "@/lib/auth-context";
-import { supabase } from "@/lib/supabase";
 import { Project } from "@/lib/types";
 import { Plus, Pause, Play, CheckCircle2 } from "lucide-react";
 
@@ -19,35 +18,34 @@ export default function ProjectsPage() {
   const fetchProjects = useCallback(async () => {
     setLoading(true);
 
-    const { data: projectList } = await supabase
-      .from("projects")
-      .select("*")
-      .order("status")
-      .order("name");
+    try {
+      const [projectsRes, hoursRes] = await Promise.all([
+        fetch("/api/projects"),
+        fetch("/api/entries?fields=project_id,hours"),
+      ]);
 
-    if (!projectList) {
-      setLoading(false);
-      return;
+      const projectsData = await projectsRes.json();
+      const hoursData = await hoursRes.json();
+
+      const projectList = projectsData.projects || [];
+      const hoursSummary = hoursData.entries || [];
+
+      const hoursMap: Record<string, number> = {};
+      hoursSummary.forEach((e: { project_id: string; hours: number }) => {
+        if (e.project_id) {
+          hoursMap[e.project_id] = (hoursMap[e.project_id] || 0) + Number(e.hours);
+        }
+      });
+
+      setProjects(
+        projectList.map((p: Project) => ({
+          ...p,
+          total_hours: hoursMap[p.id] || 0,
+        }))
+      );
+    } catch {
+      // Handle error
     }
-
-    // Get total hours per project
-    const { data: hoursSummary } = await supabase
-      .from("time_entries")
-      .select("project_id, hours");
-
-    const hoursMap: Record<string, number> = {};
-    (hoursSummary || []).forEach((e) => {
-      if (e.project_id) {
-        hoursMap[e.project_id] = (hoursMap[e.project_id] || 0) + Number(e.hours);
-      }
-    });
-
-    setProjects(
-      projectList.map((p) => ({
-        ...(p as Project),
-        total_hours: hoursMap[p.id] || 0,
-      }))
-    );
     setLoading(false);
   }, []);
 
@@ -57,10 +55,15 @@ export default function ProjectsPage() {
 
   async function handleAdd() {
     setSaving(true);
-    await supabase.from("projects").insert({
-      name: newName,
-      description: newDesc || null,
-    });
+    try {
+      await fetch("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newName, description: newDesc || null }),
+      });
+    } catch {
+      // Handle error
+    }
     setNewName("");
     setNewDesc("");
     setShowAdd(false);
@@ -69,7 +72,15 @@ export default function ProjectsPage() {
   }
 
   async function updateStatus(id: string, status: "active" | "completed" | "paused") {
-    await supabase.from("projects").update({ status }).eq("id", id);
+    try {
+      await fetch("/api/projects", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, status }),
+      });
+    } catch {
+      // Handle error
+    }
     fetchProjects();
   }
 

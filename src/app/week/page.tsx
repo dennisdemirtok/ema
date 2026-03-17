@@ -1,9 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { AppShell } from "@/components/app-shell";
 import { useAuth } from "@/lib/auth-context";
-import { supabase } from "@/lib/supabase";
 import { TimeEntry } from "@/lib/types";
 import { ChevronLeft, ChevronRight, CalendarX2 } from "lucide-react";
 import { format, startOfWeek, endOfWeek, addWeeks, subWeeks, eachDayOfInterval, isSameDay } from "date-fns";
@@ -19,24 +18,27 @@ export default function WeekPage() {
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 });
-  const days = eachDayOfInterval({ start: weekStart, end: weekEnd });
+  // Memoize derived values to prevent infinite re-render loop
+  const weekEnd = useMemo(() => endOfWeek(weekStart, { weekStartsOn: 1 }), [weekStart]);
+  const days = useMemo(() => eachDayOfInterval({ start: weekStart, end: weekEnd }), [weekStart, weekEnd]);
+  const weekStartStr = useMemo(() => format(weekStart, "yyyy-MM-dd"), [weekStart]);
+  const weekEndStr = useMemo(() => format(weekEnd, "yyyy-MM-dd"), [weekEnd]);
 
   const fetchEntries = useCallback(async () => {
     if (!user) return;
     setLoading(true);
 
-    const { data } = await supabase
-      .from("time_entries")
-      .select("*, project:projects(*)")
-      .eq("user_id", user.id)
-      .gte("date", format(weekStart, "yyyy-MM-dd"))
-      .lte("date", format(weekEnd, "yyyy-MM-dd"))
-      .order("date");
-
-    if (data) setEntries(data as TimeEntry[]);
+    try {
+      const res = await fetch(
+        `/api/entries?user_id=${user.id}&date_from=${weekStartStr}&date_to=${weekEndStr}&order=date`
+      );
+      const data = await res.json();
+      if (data.entries) setEntries(data.entries as TimeEntry[]);
+    } catch {
+      // Silently handle fetch errors
+    }
     setLoading(false);
-  }, [user, weekStart, weekEnd]);
+  }, [user, weekStartStr, weekEndStr]);
 
   useEffect(() => {
     fetchEntries();

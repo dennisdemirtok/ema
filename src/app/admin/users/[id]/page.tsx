@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { AppShell } from "@/components/app-shell";
 import { useAuth } from "@/lib/auth-context";
-import { supabase } from "@/lib/supabase";
 import { User, TimeEntry } from "@/lib/types";
 import { ArrowLeft, Download } from "lucide-react";
 import { format, subDays } from "date-fns";
@@ -25,19 +24,20 @@ export default function UserDetailPage() {
   const fetchData = useCallback(async () => {
     setLoading(true);
 
-    const [userRes, entriesRes] = await Promise.all([
-      supabase.from("users").select("*").eq("id", userId).single(),
-      supabase
-        .from("time_entries")
-        .select("*, project:projects(*)")
-        .eq("user_id", userId)
-        .gte("date", from)
-        .lte("date", to)
-        .order("date", { ascending: false }),
-    ]);
+    try {
+      const [userRes, entriesRes] = await Promise.all([
+        fetch(`/api/admin/users?id=${userId}`),
+        fetch(`/api/entries?user_id=${userId}&date_from=${from}&date_to=${to}&order=date&ascending=false`),
+      ]);
 
-    if (userRes.data) setWorker(userRes.data as User);
-    if (entriesRes.data) setEntries(entriesRes.data as TimeEntry[]);
+      const userData = await userRes.json();
+      const entriesData = await entriesRes.json();
+
+      if (userData.user) setWorker(userData.user as User);
+      if (entriesData.entries) setEntries(entriesData.entries as TimeEntry[]);
+    } catch {
+      // Handle error
+    }
     setLoading(false);
   }, [userId, from, to]);
 

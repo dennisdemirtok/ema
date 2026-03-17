@@ -1,22 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { createServerSupabase } from "@/lib/supabase-server";
 
 export async function GET(request: NextRequest) {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-
-  const authHeader = request.headers.get("authorization");
-  const cookieHeader = request.headers.get("cookie");
-
-  // Create client with user's auth
-  const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-    global: {
-      headers: {
-        ...(authHeader ? { authorization: authHeader } : {}),
-        ...(cookieHeader ? { cookie: cookieHeader } : {}),
-      },
-    },
-  });
+  const { supabase, accessToken } = await createServerSupabase();
+  if (!accessToken) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { searchParams } = new URL(request.url);
   const from = searchParams.get("from");
@@ -24,8 +11,8 @@ export async function GET(request: NextRequest) {
   const userId = searchParams.get("user");
 
   let query = supabase
-    .from("time_entries")
-    .select("date, hours, description, user:users(name), project:projects(name)")
+    .from("tr_time_entries")
+    .select("date, hours, description, user:tr_users(name), project:tr_projects(name)")
     .order("date", { ascending: true });
 
   if (from) query = query.gte("date", from);

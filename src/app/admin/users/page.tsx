@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { AppShell } from "@/components/app-shell";
 import { useAuth } from "@/lib/auth-context";
-import { supabase } from "@/lib/supabase";
 import { User } from "@/lib/types";
 import { UserPlus, Shield, Wrench } from "lucide-react";
 import Link from "next/link";
@@ -20,8 +19,13 @@ export default function UsersPage() {
 
   const fetchUsers = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase.from("users").select("*").order("name");
-    if (data) setUsers(data as User[]);
+    try {
+      const res = await fetch("/api/admin/users");
+      const data = await res.json();
+      if (data.users) setUsers(data.users as User[]);
+    } catch {
+      // Handle error
+    }
     setLoading(false);
   }, []);
 
@@ -31,11 +35,15 @@ export default function UsersPage() {
 
   async function handleAdd() {
     setSaving(true);
-    await supabase.from("users").insert({
-      name: newName,
-      email: newEmail,
-      role: newRole,
-    });
+    try {
+      await fetch("/api/admin/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newName, email: newEmail, role: newRole }),
+      });
+    } catch {
+      // Handle error
+    }
     setNewName("");
     setNewEmail("");
     setNewRole("worker");
@@ -45,7 +53,15 @@ export default function UsersPage() {
   }
 
   async function toggleActive(u: User) {
-    await supabase.from("users").update({ is_active: !u.is_active }).eq("id", u.id);
+    try {
+      await fetch("/api/admin/users", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: u.id, is_active: !u.is_active }),
+      });
+    } catch {
+      // Handle error
+    }
     fetchUsers();
   }
 

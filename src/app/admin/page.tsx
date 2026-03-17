@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { AppShell } from "@/components/app-shell";
 import { useAuth } from "@/lib/auth-context";
-import { supabase } from "@/lib/supabase";
 import { User } from "@/lib/types";
 import { AlertCircle, CheckCircle2, Download, Clock, CalendarDays } from "lucide-react";
 import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from "date-fns";
@@ -32,44 +31,38 @@ export default function AdminPage() {
   const fetchData = useCallback(async () => {
     setLoading(true);
 
-    const { data: users } = await supabase
-      .from("users")
-      .select("*")
-      .eq("is_active", true)
-      .eq("role", "worker")
-      .order("name");
+    try {
+      const [usersRes, weekRes, monthRes] = await Promise.all([
+        fetch("/api/admin/users?role=worker&is_active=true"),
+        fetch(`/api/entries?date_from=${weekStart}&date_to=${weekEnd}&fields=user_id,hours,date`),
+        fetch(`/api/entries?date_from=${monthStart}&date_to=${monthEnd}&fields=user_id,hours`),
+      ]);
 
-    if (!users) {
-      setLoading(false);
-      return;
+      const usersData = await usersRes.json();
+      const weekData = await weekRes.json();
+      const monthData = await monthRes.json();
+
+      const users = usersData.users || [];
+      const weekEntries = weekData.entries || [];
+      const monthEntries = monthData.entries || [];
+
+      const summaries: WorkerSummary[] = users.map((u: User) => ({
+        user: u,
+        weekHours: weekEntries
+          .filter((e: { user_id: string }) => e.user_id === u.id)
+          .reduce((sum: number, e: { hours: number }) => sum + Number(e.hours), 0),
+        monthHours: monthEntries
+          .filter((e: { user_id: string }) => e.user_id === u.id)
+          .reduce((sum: number, e: { hours: number }) => sum + Number(e.hours), 0),
+        reportedToday: weekEntries.some(
+          (e: { user_id: string; date: string }) => e.user_id === u.id && e.date === today
+        ),
+      }));
+
+      setWorkers(summaries);
+    } catch {
+      // Handle error
     }
-
-    const { data: weekEntries } = await supabase
-      .from("time_entries")
-      .select("user_id, hours, date")
-      .gte("date", weekStart)
-      .lte("date", weekEnd);
-
-    const { data: monthEntries } = await supabase
-      .from("time_entries")
-      .select("user_id, hours")
-      .gte("date", monthStart)
-      .lte("date", monthEnd);
-
-    const summaries: WorkerSummary[] = users.map((u) => ({
-      user: u as User,
-      weekHours: (weekEntries || [])
-        .filter((e) => e.user_id === u.id)
-        .reduce((sum, e) => sum + Number(e.hours), 0),
-      monthHours: (monthEntries || [])
-        .filter((e) => e.user_id === u.id)
-        .reduce((sum, e) => sum + Number(e.hours), 0),
-      reportedToday: (weekEntries || []).some(
-        (e) => e.user_id === u.id && e.date === today
-      ),
-    }));
-
-    setWorkers(summaries);
     setLoading(false);
   }, [weekStart, weekEnd, monthStart, monthEnd, today]);
 

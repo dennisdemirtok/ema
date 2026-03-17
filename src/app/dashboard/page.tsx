@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { AppShell } from "@/components/app-shell";
 import { useAuth } from "@/lib/auth-context";
-import { supabase } from "@/lib/supabase";
 import { TimeEntry, Project } from "@/lib/types";
 import { Plus, Minus, Save, Pencil, Trash2, ChevronLeft, ChevronRight, ClipboardList } from "lucide-react";
 import { format, addDays, subDays } from "date-fns";
@@ -31,18 +30,20 @@ function DashboardContent() {
     if (!user) return;
     setLoading(true);
 
-    const [projectsRes, entriesRes] = await Promise.all([
-      supabase.from("projects").select("*").eq("status", "active").order("name"),
-      supabase
-        .from("time_entries")
-        .select("*, project:projects(*)")
-        .eq("user_id", user.id)
-        .eq("date", date)
-        .order("created_at", { ascending: false }),
-    ]);
+    try {
+      const [projectsRes, entriesRes] = await Promise.all([
+        fetch("/api/projects?status=active"),
+        fetch(`/api/entries?user_id=${user.id}&date=${date}&order=created_at&ascending=false`),
+      ]);
 
-    if (projectsRes.data) setProjects(projectsRes.data);
-    if (entriesRes.data) setEntries(entriesRes.data as TimeEntry[]);
+      const projectsData = await projectsRes.json();
+      const entriesData = await entriesRes.json();
+
+      if (projectsData.projects) setProjects(projectsData.projects);
+      if (entriesData.entries) setEntries(entriesData.entries as TimeEntry[]);
+    } catch {
+      // Silently handle fetch errors
+    }
     setLoading(false);
   }, [user, date]);
 
@@ -54,19 +55,36 @@ function DashboardContent() {
     if (!user) return;
     setSaving(true);
 
-    const entry = {
-      user_id: user.id,
-      project_id: projectId || null,
-      date,
-      hours,
-      description: description || null,
-    };
-
-    if (editingId) {
-      await supabase.from("time_entries").update(entry).eq("id", editingId);
-      setEditingId(null);
-    } else {
-      await supabase.from("time_entries").insert(entry);
+    try {
+      if (editingId) {
+        await fetch("/api/entries", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: editingId,
+            user_id: user.id,
+            project_id: projectId || null,
+            date,
+            hours,
+            description: description || null,
+          }),
+        });
+        setEditingId(null);
+      } else {
+        await fetch("/api/entries", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            user_id: user.id,
+            project_id: projectId || null,
+            date,
+            hours,
+            description: description || null,
+          }),
+        });
+      }
+    } catch {
+      // Handle error
     }
 
     setProjectId("");
@@ -77,7 +95,7 @@ function DashboardContent() {
   }
 
   async function handleDelete(id: string) {
-    await supabase.from("time_entries").delete().eq("id", id);
+    await fetch(`/api/entries?id=${id}`, { method: "DELETE" });
     fetchData();
   }
 
