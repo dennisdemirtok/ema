@@ -27,17 +27,18 @@ export async function POST(request: NextRequest) {
     .single();
 
   // Store tokens in httpOnly cookies
+  const isProduction = process.env.NODE_ENV === "production";
   const cookieStore = await cookies();
   cookieStore.set("sb-access-token", data.session!.access_token, {
     httpOnly: true,
-    secure: false,
+    secure: isProduction,
     sameSite: "lax",
     path: "/",
     maxAge: 60 * 60 * 24 * 30, // 30 dagar
   });
   cookieStore.set("sb-refresh-token", data.session!.refresh_token, {
     httpOnly: true,
-    secure: false,
+    secure: isProduction,
     sameSite: "lax",
     path: "/",
     maxAge: 60 * 60 * 24 * 30, // 30 dagar

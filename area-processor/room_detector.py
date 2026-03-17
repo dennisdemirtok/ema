@@ -1,12 +1,13 @@
 """
-Room Detection using vector ray-casting with smart grid-line skipping.
-For each room label, casts rays in 4 directions using vector wall data.
-Detects ceiling grid patterns per-ray and skips them to find actual walls.
+Room Detection using vector ray-casting with consecutive-spacing grid detection.
+
+For each room label, casts rays in 4 directions.
+Detects ceiling grid by finding runs of consecutive ~17pt spacing.
+The first line after the grid run is the room wall.
 """
 
-from typing import Optional
+from typing import Optional, List, Tuple
 
-import numpy as np
 from dataclasses import dataclass, field
 from pdf_parser import PDFData
 from config import MIN_ROOM_AREA_M2, MAX_ROOM_AREA_M2
@@ -30,13 +31,9 @@ def is_v(line, tol=2.0):
     return abs(line.x1 - line.x0) < tol
 
 
-def find_all_walls_in_direction(cx, cy, direction, wall_lines, min_dist=5, max_dist=1500):
-    """
-    Find ALL wall lines in a given direction from (cx, cy).
-    Returns list of (distance, line) tuples sorted by distance.
-    """
+def find_all_in_direction(cx, cy, direction, wall_lines, min_dist=3, max_dist=1500):
+    """Find ALL wall lines in a direction, sorted by distance."""
     results = []
-
     for line in wall_lines:
         if direction in ('left', 'right') and is_v(line):
             wall_x = (line.x0 + line.x1) / 2
@@ -46,12 +43,11 @@ def find_all_walls_in_direction(cx, cy, direction, wall_lines, min_dist=5, max_d
                 if direction == 'left' and wall_x < cx:
                     dist = cx - wall_x
                     if min_dist < dist < max_dist:
-                        results.append((dist, line))
+                        results.append((dist, line.length))
                 elif direction == 'right' and wall_x > cx:
                     dist = wall_x - cx
                     if min_dist < dist < max_dist:
-                        results.append((dist, line))
-
+                        results.append((dist, line.length))
         elif direction in ('up', 'down') and is_h(line):
             wall_y = (line.y0 + line.y1) / 2
             x_min = min(line.x0, line.x1)
@@ -60,85 +56,119 @@ def find_all_walls_in_direction(cx, cy, direction, wall_lines, min_dist=5, max_d
                 if direction == 'up' and wall_y < cy:
                     dist = cy - wall_y
                     if min_dist < dist < max_dist:
-                        results.append((dist, line))
+                        results.append((dist, line.length))
                 elif direction == 'down' and wall_y > cy:
                     dist = wall_y - cy
                     if min_dist < dist < max_dist:
-                        results.append((dist, line))
-
+                        results.append((dist, line.length))
     results.sort(key=lambda x: x[0])
     return results
 
 
-def has_wall_pair(dist, candidates, idx):
+def find_room_wall(cx, cy, direction, wall_lines, grid_spacing=17, grid_tol=3.5):
     """
-    Check if a wall has a close partner indicating a structural double-wall.
-    CAD structural walls are drawn as parallel double lines (0.5-8pt apart),
-    or as duplicate/overlapping lines at the same position.
-    Ceiling grid lines are single lines spaced at ~17pt.
-    """
-    for j, (od, _) in enumerate(candidates):
-        if j == idx:
-            continue
-        gap = abs(dist - od)
-        # Close pair: double-wall lines 0.5-8pt apart
-        if 0.5 < gap < 8:
-            return True
-        # Duplicate: overlapping wall lines at same position
-        if gap < 0.5:
-            return True
-    return False
-
-
-def find_room_wall(cx, cy, direction, wall_lines, grid_spacing=17, grid_tolerance=3):
-    """
-    Find the actual room wall in a given direction, skipping ceiling grid lines.
+    Find the room wall using consecutive-spacing grid detection.
 
     Strategy:
-    1. Find all walls in the direction
-    2. A wall is structural if it has a pair partner (double-wall or duplicate)
-    3. A wall is grid if it has neighbors at ~17pt spacing
-    4. Return the first structural or non-grid wall
+    1. Get all lines sorted by distance, deduplicate positions
+    2. Calculate consecutive spacings between positions
+    3. Find the longest run of ~17pt spacings = grid
+    4. The first line after the grid run is the room wall
     """
-    candidates = find_all_walls_in_direction(cx, cy, direction, wall_lines, min_dist=3)
+    raw = find_all_in_direction(cx, cy, direction, wall_lines, min_dist=3)
+    if not raw:
+        return 1500
 
-    if not candidates:
-        return 1500  # No wall found
+    # Deduplicate: merge lines within 0.5pt, keep max length per position
+    positions = []  # [(dist, max_length)]
+    for dist, length in raw:
+        merged = False
+        for i, (pd, pl) in enumerate(positions):
+            if abs(dist - pd) < 0.5:
+                positions[i] = (min(pd, dist), max(pl, length))
+                merged = True
+                break
+        if not merged:
+            positions.append((dist, length))
 
-    for i, (dist, line) in enumerate(candidates):
-        # Check 1: Does this wall have a pair partner? → structural wall
-        if has_wall_pair(dist, candidates, i):
-            return dist
+    if len(positions) == 0:
+        return 1500
+    if len(positions) == 1:
+        return positions[0][0]
 
-        # Check 2: Is this wall part of a regular grid?
-        is_grid = False
-        for j, (other_dist, _) in enumerate(candidates):
+    # Calculate consecutive spacings
+    spacings = []
+    for i in range(1, len(positions)):
+        spacings.append(positions[i][0] - positions[i-1][0])
+
+    # Find runs of ~17pt spacings (2+ consecutive)
+    is_grid_spacing = [abs(s - grid_spacing) < grid_tol for s in spacings]
+
+    # Mark positions that are part of grid runs
+    grid_flags = [False] * len(positions)
+
+    run_start = None
+    for i in range(len(is_grid_spacing)):
+        if is_grid_spacing[i]:
+            if run_start is None:
+                run_start = i
+        else:
+            if run_start is not None:
+                run_len = i - run_start
+                if run_len >= 2:
+                    for j in range(run_start, i + 1):
+                        grid_flags[j] = True
+                run_start = None
+    if run_start is not None:
+        run_len = len(is_grid_spacing) - run_start
+        if run_len >= 2:
+            for j in range(run_start, len(positions)):
+                grid_flags[j] = True
+
+    # After grid run, find the room wall:
+    # 1. First look for a non-grid position with a long-wall pair (> 200pt within 10pt)
+    # 2. Fallback: first non-grid position
+    best_with_long_pair = None
+    best_non_grid = None
+
+    for i in range(len(positions)):
+        if grid_flags[i]:
+            continue
+
+        if best_non_grid is None:
+            best_non_grid = i
+
+        # Check if this position has a partner > 200pt within 10pt
+        # Candidate must itself be a real wall (>= 60pt), not a door frame
+        if positions[i][1] < 60:
+            continue
+        for j in range(len(positions)):
             if i == j:
                 continue
-            spacing = abs(dist - other_dist)
-            if abs(spacing - grid_spacing) < grid_tolerance:
-                is_grid = True
-                break
-            if abs(spacing - 2 * grid_spacing) < grid_tolerance:
-                is_grid = True
-                break
+            gap = abs(positions[i][0] - positions[j][0])
+            if 0.5 < gap < 10:
+                if positions[j][1] > 200:
+                    if best_with_long_pair is None:
+                        best_with_long_pair = i
+                    break
 
-        if not is_grid:
-            return dist
+    # Prefer the long-wall pair ONLY if it's close to the first non-grid position
+    # (within 30pt). This avoids picking distant walls on the wrong side.
+    if best_with_long_pair is not None and best_non_grid is not None:
+        dist_pair = positions[best_with_long_pair][0]
+        dist_first = positions[best_non_grid][0]
+        if dist_pair <= dist_first * 1.5 and abs(dist_pair - dist_first) < 30:
+            return dist_pair
 
-    # All walls are grid lines → take the farthest one and add grid_spacing
-    distances = [c[0] for c in candidates]
-    return distances[-1] + grid_spacing / 2
+    if best_non_grid is not None:
+        return positions[best_non_grid][0]
+
+    # All positions are grid
+    return positions[-1][0]
 
 
 def detect_rooms(pdf_data):
-    """
-    Room detection:
-    1. For each room label, find walls in 4 directions
-    2. Smart grid-line skipping per direction
-    3. Calculate rectangular room area
-    """
-    # Use long wall lines only (structural + grid, both are long)
+    """Detect rooms using ray-casting with consecutive-spacing grid detection."""
     MIN_WALL_LEN = 30
     wall_lines = [l for l in pdf_data.wall_lines if l.length >= MIN_WALL_LEN]
     pts_to_m = pdf_data.pts_to_m
@@ -148,7 +178,6 @@ def detect_rooms(pdf_data):
     print(f"    Scale: 1:{pdf_data.scale}")
 
     rooms = []
-
     for label in pdf_data.room_labels:
         cx, cy = label.center
 
@@ -171,15 +200,12 @@ def detect_rooms(pdf_data):
             (cx - dl, cy + dd),
         ]
 
-        centroid = (cx, cy)
-        polygon_m = [(p[0] * pts_to_m, p[1] * pts_to_m) for p in polygon_pts]
-
         rooms.append(Room(
             name=label.text,
             polygon_pts=polygon_pts,
-            polygon_m=polygon_m,
+            polygon_m=[(p[0] * pts_to_m, p[1] * pts_to_m) for p in polygon_pts],
             area_m2=round(area_m2, 2),
-            centroid_pts=centroid,
+            centroid_pts=(cx, cy),
             confidence=0.80,
             source="auto"
         ))

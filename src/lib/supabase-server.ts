@@ -30,16 +30,17 @@ export async function createServerSupabase() {
         accessToken = refreshData.session.access_token;
 
         // Update cookies with new tokens
+        const isProduction = process.env.NODE_ENV === "production";
         cookieStore.set("sb-access-token", refreshData.session.access_token, {
           httpOnly: true,
-          secure: false,
+          secure: isProduction,
           sameSite: "lax",
           path: "/",
           maxAge: 60 * 60 * 24 * 30,
         });
         cookieStore.set("sb-refresh-token", refreshData.session.refresh_token, {
           httpOnly: true,
-          secure: false,
+          secure: isProduction,
           sameSite: "lax",
           path: "/",
           maxAge: 60 * 60 * 24 * 30,
