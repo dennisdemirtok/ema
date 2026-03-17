@@ -158,11 +158,11 @@ def find_room_wall(cx, cy, direction, wall_lines, grid_spacing=17, grid_tol=2.5)
                     grid_flags[last_grid_idx] = False
                     return d_last  # Return the grid position (inner face)
 
-        # Rule C: huge gap after last grid position (> 3x grid_spacing)
+        # Rule C: large gap after last grid position (> 2.5x grid_spacing)
         # → wall at boundary of building/floor
         if last_grid_idx < len(positions) - 1:
             next_gap = positions[last_grid_idx + 1][0] - d_last
-            if next_gap > grid_spacing * 3:
+            if next_gap > grid_spacing * 2.5:
                 grid_flags[last_grid_idx] = False
                 return d_last
         elif last_grid_idx == len(positions) - 1:
