@@ -5,7 +5,7 @@ import { AppShell } from "@/components/app-shell";
 import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/lib/supabase";
 import { User } from "@/lib/types";
-import { AlertCircle, CheckCircle2, Download } from "lucide-react";
+import { AlertCircle, CheckCircle2, Download, Clock, CalendarDays } from "lucide-react";
 import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from "date-fns";
 import { sv } from "date-fns/locale";
 import Link from "next/link";
@@ -97,7 +97,7 @@ export default function AdminPage() {
           <h2 className="text-xl font-bold text-slate-900">Översikt</h2>
           <a
             href={`/api/admin/export?from=${monthStart}&to=${monthEnd}`}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition-colors"
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition-colors shadow-sm"
           >
             <Download className="w-4 h-4" />
             Exportera CSV
@@ -106,12 +106,20 @@ export default function AdminPage() {
 
         {/* Summary cards */}
         <div className="grid grid-cols-2 gap-3">
-          <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
-            <div className="text-sm text-slate-500">Denna vecka</div>
+          <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm overflow-hidden relative">
+            <div className="absolute top-0 left-0 right-0 h-[3px] bg-gradient-to-r from-blue-500 to-blue-400" />
+            <div className="flex items-center gap-2 mb-1">
+              <Clock className="w-4 h-4 text-blue-500" />
+              <span className="text-sm text-slate-500">Denna vecka</span>
+            </div>
             <div className="text-2xl font-bold text-slate-900">{totalWeekHours}h</div>
           </div>
-          <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
-            <div className="text-sm text-slate-500">Denna månad</div>
+          <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm overflow-hidden relative">
+            <div className="absolute top-0 left-0 right-0 h-[3px] bg-gradient-to-r from-indigo-500 to-purple-400" />
+            <div className="flex items-center gap-2 mb-1">
+              <CalendarDays className="w-4 h-4 text-indigo-500" />
+              <span className="text-sm text-slate-500">Denna månad</span>
+            </div>
             <div className="text-2xl font-bold text-slate-900">{totalMonthHours}h</div>
           </div>
         </div>
@@ -123,40 +131,50 @@ export default function AdminPage() {
             <div className="text-center py-8 text-slate-400">Laddar...</div>
           ) : (
             <div className="space-y-3">
-              {workers.map((w) => (
-                <Link
-                  key={w.user.id}
-                  href={`/admin/users/${w.user.id}`}
-                  className="block bg-white rounded-xl border border-slate-200 p-4 shadow-sm hover:border-blue-300 transition-colors"
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="font-semibold text-slate-900">{w.user.name}</div>
-                      <div className="text-sm text-slate-500">{w.user.email}</div>
+              {workers.map((w) => {
+                const initials = w.user.name
+                  ? w.user.name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2)
+                  : "?";
+                return (
+                  <Link
+                    key={w.user.id}
+                    href={`/admin/users/${w.user.id}`}
+                    className="block bg-white rounded-xl border border-slate-200 p-4 shadow-sm hover:shadow-md hover:border-blue-300 transition-all duration-150"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-indigo-500 flex items-center justify-center text-sm font-bold text-white flex-shrink-0">
+                          {initials}
+                        </div>
+                        <div>
+                          <div className="font-semibold text-slate-900">{w.user.name}</div>
+                          <div className="text-sm text-slate-500">{w.user.email}</div>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-lg font-bold text-slate-900">{w.weekHours}h</div>
+                        <div className="text-xs text-slate-400">denna vecka</div>
+                      </div>
                     </div>
-                    <div className="text-right">
-                      <div className="text-lg font-bold text-slate-900">{w.weekHours}h</div>
-                      <div className="text-xs text-slate-400">denna vecka</div>
+                    <div className="mt-2 flex items-center gap-2">
+                      {w.reportedToday ? (
+                        <span className="inline-flex items-center gap-1 text-xs font-medium bg-green-50 text-green-700 px-2 py-1 rounded-full">
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          Rapporterat idag
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-xs font-medium bg-amber-50 text-amber-700 px-2 py-1 rounded-full">
+                          <AlertCircle className="w-3.5 h-3.5" />
+                          Ej rapporterat idag
+                        </span>
+                      )}
+                      <span className="text-xs text-slate-400 ml-auto">
+                        {w.monthHours}h denna månad
+                      </span>
                     </div>
-                  </div>
-                  <div className="mt-2 flex items-center gap-2">
-                    {w.reportedToday ? (
-                      <span className="flex items-center gap-1 text-xs text-green-600">
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        Rapporterat idag
-                      </span>
-                    ) : (
-                      <span className="flex items-center gap-1 text-xs text-amber-600">
-                        <AlertCircle className="w-3.5 h-3.5" />
-                        Ej rapporterat idag
-                      </span>
-                    )}
-                    <span className="text-xs text-slate-400 ml-auto">
-                      {w.monthHours}h denna månad
-                    </span>
-                  </div>
-                </Link>
-              ))}
+                  </Link>
+                );
+              })}
             </div>
           )}
         </div>

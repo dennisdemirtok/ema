@@ -64,7 +64,7 @@ export default function UsersPage() {
           <h2 className="text-xl font-bold text-slate-900">Personal</h2>
           <button
             onClick={() => setShowAdd(!showAdd)}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors"
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors shadow-sm"
           >
             <UserPlus className="w-4 h-4" />
             Lägg till
@@ -81,7 +81,7 @@ export default function UsersPage() {
                 type="text"
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl border border-slate-300 text-base"
+                className="w-full px-4 py-3 rounded-xl border border-slate-300 text-base focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all duration-200"
                 placeholder="Förnamn Efternamn"
               />
             </div>
@@ -91,7 +91,7 @@ export default function UsersPage() {
                 type="email"
                 value={newEmail}
                 onChange={(e) => setNewEmail(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl border border-slate-300 text-base"
+                className="w-full px-4 py-3 rounded-xl border border-slate-300 text-base focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all duration-200"
                 placeholder="namn@email.se"
               />
             </div>
@@ -100,7 +100,7 @@ export default function UsersPage() {
               <select
                 value={newRole}
                 onChange={(e) => setNewRole(e.target.value as "worker" | "admin")}
-                className="w-full px-4 py-3 rounded-xl border border-slate-300 bg-white text-base"
+                className="w-full px-4 py-3 rounded-xl border border-slate-300 bg-white text-base focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all duration-200"
               >
                 <option value="worker">Montör</option>
                 <option value="admin">Admin</option>
@@ -109,7 +109,7 @@ export default function UsersPage() {
             <button
               onClick={handleAdd}
               disabled={saving || !newName || !newEmail}
-              className="w-full bg-green-600 hover:bg-green-700 disabled:bg-green-400 text-white font-semibold py-3 rounded-xl transition-colors"
+              className="w-full bg-green-600 hover:bg-green-700 disabled:bg-green-400 text-white font-semibold py-3 rounded-xl transition-colors shadow-md shadow-green-600/20"
             >
               {saving ? "Sparar..." : "Lägg till"}
             </button>
@@ -121,38 +121,59 @@ export default function UsersPage() {
           <div className="text-center py-8 text-slate-400">Laddar...</div>
         ) : (
           <div className="space-y-3">
-            {users.map((u) => (
-              <div
-                key={u.id}
-                className={`bg-white rounded-xl border p-4 shadow-sm ${
-                  u.is_active ? "border-slate-200" : "border-slate-200 opacity-50"
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <Link href={`/admin/users/${u.id}`} className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      {u.role === "admin" ? (
-                        <Shield className="w-4 h-4 text-amber-500" />
-                      ) : (
-                        <Wrench className="w-4 h-4 text-blue-500" />
-                      )}
-                      <span className="font-semibold text-slate-900">{u.name}</span>
-                    </div>
-                    <div className="text-sm text-slate-500 mt-0.5">{u.email}</div>
-                  </Link>
-                  <button
-                    onClick={() => toggleActive(u)}
-                    className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-colors ${
-                      u.is_active
-                        ? "bg-green-50 text-green-700 hover:bg-green-100"
-                        : "bg-slate-100 text-slate-500 hover:bg-slate-200"
-                    }`}
-                  >
-                    {u.is_active ? "Aktiv" : "Inaktiv"}
-                  </button>
+            {users.map((u) => {
+              const initials = u.name
+                ? u.name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2)
+                : "?";
+              const isAdmin = u.role === "admin";
+              return (
+                <div
+                  key={u.id}
+                  className={`bg-white rounded-xl border p-4 shadow-sm hover:shadow-md transition-all duration-150 ${
+                    u.is_active ? "border-slate-200" : "border-slate-200 opacity-50"
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <Link href={`/admin/users/${u.id}`} className="flex items-center gap-3 flex-1 min-w-0">
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold text-white flex-shrink-0 ${
+                        isAdmin
+                          ? "bg-gradient-to-br from-amber-400 to-amber-600"
+                          : "bg-gradient-to-br from-blue-500 to-indigo-500"
+                      }`}>
+                        {initials}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-slate-900">{u.name}</span>
+                          <span className={`inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${
+                            isAdmin
+                              ? "bg-amber-50 text-amber-700"
+                              : "bg-blue-50 text-blue-700"
+                          }`}>
+                            {isAdmin ? (
+                              <><Shield className="w-2.5 h-2.5" /> Admin</>
+                            ) : (
+                              <><Wrench className="w-2.5 h-2.5" /> Montör</>
+                            )}
+                          </span>
+                        </div>
+                        <div className="text-sm text-slate-500 mt-0.5 truncate">{u.email}</div>
+                      </div>
+                    </Link>
+                    <button
+                      onClick={() => toggleActive(u)}
+                      className={`text-xs px-3 py-1.5 rounded-full font-semibold transition-colors flex-shrink-0 ml-3 ${
+                        u.is_active
+                          ? "bg-green-50 text-green-700 hover:bg-green-100 border border-green-200"
+                          : "bg-slate-100 text-slate-500 hover:bg-slate-200 border border-slate-200"
+                      }`}
+                    >
+                      {u.is_active ? "Aktiv" : "Inaktiv"}
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

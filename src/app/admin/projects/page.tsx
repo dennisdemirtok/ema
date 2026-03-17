@@ -73,16 +73,25 @@ export default function ProjectsPage() {
     fetchProjects();
   }
 
-  const statusIcon = {
-    active: <Play className="w-3.5 h-3.5 text-green-600" />,
-    paused: <Pause className="w-3.5 h-3.5 text-amber-600" />,
-    completed: <CheckCircle2 className="w-3.5 h-3.5 text-slate-400" />,
-  };
-
-  const statusLabel = {
-    active: "Aktiv",
-    paused: "Pausad",
-    completed: "Klar",
+  const statusConfig = {
+    active: {
+      icon: <Play className="w-3 h-3" />,
+      label: "Aktiv",
+      badgeClass: "bg-green-50 text-green-700 border border-green-200",
+      borderClass: "border-l-green-500",
+    },
+    paused: {
+      icon: <Pause className="w-3 h-3" />,
+      label: "Pausad",
+      badgeClass: "bg-amber-50 text-amber-700 border border-amber-200",
+      borderClass: "border-l-amber-500",
+    },
+    completed: {
+      icon: <CheckCircle2 className="w-3 h-3" />,
+      label: "Klar",
+      badgeClass: "bg-slate-50 text-slate-500 border border-slate-200",
+      borderClass: "border-l-slate-400",
+    },
   };
 
   if (user?.role !== "admin") {
@@ -100,7 +109,7 @@ export default function ProjectsPage() {
           <h2 className="text-xl font-bold text-slate-900">Projekt</h2>
           <button
             onClick={() => setShowAdd(!showAdd)}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors"
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors shadow-sm"
           >
             <Plus className="w-4 h-4" />
             Nytt projekt
@@ -119,7 +128,7 @@ export default function ProjectsPage() {
                 type="text"
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl border border-slate-300 text-base"
+                className="w-full px-4 py-3 rounded-xl border border-slate-300 text-base focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all duration-200"
                 placeholder="t.ex. Storgatan 15"
               />
             </div>
@@ -131,14 +140,14 @@ export default function ProjectsPage() {
                 value={newDesc}
                 onChange={(e) => setNewDesc(e.target.value)}
                 rows={2}
-                className="w-full px-4 py-3 rounded-xl border border-slate-300 text-base resize-none"
+                className="w-full px-4 py-3 rounded-xl border border-slate-300 text-base resize-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all duration-200"
                 placeholder="Kort beskrivning av jobbet..."
               />
             </div>
             <button
               onClick={handleAdd}
               disabled={saving || !newName}
-              className="w-full bg-green-600 hover:bg-green-700 disabled:bg-green-400 text-white font-semibold py-3 rounded-xl transition-colors"
+              className="w-full bg-green-600 hover:bg-green-700 disabled:bg-green-400 text-white font-semibold py-3 rounded-xl transition-colors shadow-md shadow-green-600/20"
             >
               {saving ? "Sparar..." : "Skapa"}
             </button>
@@ -150,40 +159,48 @@ export default function ProjectsPage() {
           <div className="text-center py-8 text-slate-400">Laddar...</div>
         ) : (
           <div className="space-y-3">
-            {projects.map((p) => (
-              <div
-                key={p.id}
-                className={`bg-white rounded-xl border border-slate-200 p-4 shadow-sm ${
-                  p.status === "completed" ? "opacity-60" : ""
-                }`}
-              >
-                <div className="flex items-start justify-between">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      {statusIcon[p.status]}
-                      <span className="font-semibold text-slate-900">{p.name}</span>
+            {projects.map((p) => {
+              const config = statusConfig[p.status];
+              return (
+                <div
+                  key={p.id}
+                  className={`bg-white rounded-xl border border-slate-200 p-4 shadow-sm border-l-4 ${config.borderClass} hover:shadow-md transition-all duration-150 ${
+                    p.status === "completed" ? "opacity-60" : ""
+                  }`}
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-slate-900">{p.name}</span>
+                        <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ${config.badgeClass}`}>
+                          {config.icon}
+                          {config.label}
+                        </span>
+                      </div>
+                      {p.description && (
+                        <p className="text-sm text-slate-500 mt-1">{p.description}</p>
+                      )}
+                      <div className="mt-2">
+                        <span className="inline-flex items-center text-xs font-semibold bg-slate-100 text-slate-700 px-2.5 py-1 rounded-full">
+                          {p.total_hours}h nedlagd tid
+                        </span>
+                      </div>
                     </div>
-                    {p.description && (
-                      <p className="text-sm text-slate-500 mt-1">{p.description}</p>
-                    )}
-                    <div className="text-sm text-slate-400 mt-1">
-                      Nedlagd tid: <span className="font-medium text-slate-600">{p.total_hours}h</span>
-                    </div>
+                    <select
+                      value={p.status}
+                      onChange={(e) =>
+                        updateStatus(p.id, e.target.value as "active" | "completed" | "paused")
+                      }
+                      className="text-xs px-2 py-1 rounded-lg border border-slate-200 bg-white ml-3 flex-shrink-0"
+                    >
+                      <option value="active">Aktiv</option>
+                      <option value="paused">Pausad</option>
+                      <option value="completed">Klar</option>
+                    </select>
                   </div>
-                  <select
-                    value={p.status}
-                    onChange={(e) =>
-                      updateStatus(p.id, e.target.value as "active" | "completed" | "paused")
-                    }
-                    className="text-xs px-2 py-1 rounded-lg border border-slate-200 bg-white"
-                  >
-                    <option value="active">Aktiv</option>
-                    <option value="paused">Pausad</option>
-                    <option value="completed">Klar</option>
-                  </select>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
