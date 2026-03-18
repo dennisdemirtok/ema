@@ -332,11 +332,12 @@ def find_small_room_rect(cx, cy, wall_lines, pts_to_m2):
     if not h_above or not h_below or not v_left or not v_right:
         return None
 
-    # Use the nearest pair in each direction (inner face)
-    top = max(p[1] for p in h_above)      # bottom of top wall pair
-    bottom = min(p[0] for p in h_below)    # top of bottom wall pair
-    left = max(p[1] for p in v_left)       # right face of left wall pair
-    right = min(p[0] for p in v_right)     # left face of right wall pair
+    # Use nearest pair in each direction. For ceiling plans, use the face of the
+    # wall pair that's closer to the room interior (inner face).
+    top = max(p[1] for p in h_above)      # inner face of top wall (lower y)
+    bottom = min(p[1] for p in h_below)   # outer face of bottom wall (higher y)
+    left = max(p[1] for p in v_left)      # inner face of left wall (right x)
+    right = min(p[0] for p in v_right)    # inner face of right wall (left x)
 
     w = right - left
     h = bottom - top
