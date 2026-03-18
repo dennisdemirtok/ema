@@ -370,6 +370,21 @@ def is_small_room_label(text):
     return bool(_SMALL_ROOM_RE.search(text_lower))
 
 
+# Rooms to EXCLUDE from ceiling area calculation
+# - "Bef" (befintlig) = existing rooms, no new ceiling
+# - Hiss = elevator shaft, no ceiling
+# - Trapphus = stairwell, no ceiling tiles
+# - Korridor = corridor, typically separate calculation
+# - Plats för skrivare, ELC = utility areas without standard ceiling
+_EXCLUDE_RE = _re.compile(
+    r'(?i)(?:^bef\s|hiss|trapphus|korridor|plats för|^elc\b)'
+)
+
+def should_exclude_room(text):
+    """Check if a room should be excluded from ceiling area calculation."""
+    return bool(_EXCLUDE_RE.search(text.strip()))
+
+
 def _grid_line_area(cx, cy, all_wall_lines, pts_to_m, search_radius=80):
     """Compute room area from ceiling grid line lengths.
 
@@ -426,8 +441,14 @@ def detect_rooms(pdf_data):
     print(f"    Scale: 1:{pdf_data.scale}")
 
     rooms = []
+    excluded = 0
     for label in pdf_data.room_labels:
         cx, cy = label.center
+
+        # Skip rooms that don't need ceiling calculation
+        if should_exclude_room(label.text):
+            excluded += 1
+            continue
 
         if is_small_room_label(label.text):
             # Small rooms: use wall pair detection (structural walls are double lines)
@@ -493,5 +514,5 @@ def detect_rooms(pdf_data):
             source="auto"
         ))
 
-    print(f"    Rooms detected: {len(rooms)}")
+    print(f"    Rooms detected: {len(rooms)} (excluded {excluded}: Bef/Hiss/Trapphus/Korridor)")
     return rooms
