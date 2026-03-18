@@ -370,6 +370,49 @@ def is_small_room_label(text):
     return bool(_SMALL_ROOM_RE.search(text_lower))
 
 
+def _grid_line_area(cx, cy, all_wall_lines, pts_to_m, search_radius=80):
+    """Compute room area from ceiling grid line lengths.
+
+    Grid lines (undertaksplattor 600x600mm) span wall-to-wall within a room.
+    The most common line length near the label = the room dimension.
+    Returns area in m² or None if no clear grid pattern found.
+    """
+    from collections import Counter
+
+    h_lens = []
+    for line in all_wall_lines:
+        if not is_h(line) or line.length < 30 or line.length > 500:
+            continue
+        y = (line.y0 + line.y1) / 2
+        xmin, xmax = min(line.x0, line.x1), max(line.x0, line.x1)
+        if abs(y - cy) < search_radius and xmin - 5 <= cx <= xmax + 5:
+            h_lens.append(round(line.length, 0))
+
+    v_lens = []
+    for line in all_wall_lines:
+        if not is_v(line) or line.length < 30 or line.length > 500:
+            continue
+        x = (line.x0 + line.x1) / 2
+        ymin, ymax = min(line.y0, line.y1), max(line.y0, line.y1)
+        if abs(x - cx) < search_radius and ymin - 5 <= cy <= ymax + 5:
+            v_lens.append(round(line.length, 0))
+
+    if len(h_lens) < 2 or len(v_lens) < 2:
+        return None
+
+    h_counter = Counter(h_lens)
+    v_counter = Counter(v_lens)
+
+    # Most common length = room dimension. Must have at least 2 occurrences
+    h_best, h_count = h_counter.most_common(1)[0]
+    v_best, v_count = v_counter.most_common(1)[0]
+
+    if h_count < 2 or v_count < 2:
+        return None  # Not enough grid lines to be confident
+
+    return round(h_best * v_best * pts_to_m ** 2, 2)
+
+
 def detect_rooms(pdf_data):
     """Detect rooms using ray-casting with consecutive-spacing grid detection."""
     MIN_WALL_LEN = 30
@@ -407,7 +450,11 @@ def detect_rooms(pdf_data):
             ))
             continue
 
-        # Normal rooms: full grid-aware detection
+        # PRIMARY: Use grid-line-length for area (most accurate)
+        # Grid lines span wall-to-wall; their length = room dimension
+        grid_area = _grid_line_area(cx, cy, pdf_data.wall_lines, pts_to_m)
+
+        # Ray-casting for polygon placement
         dl = find_room_wall(cx, cy, 'left', wall_lines, fallback_wall_lines=wall_lines_fb)
         dr = find_room_wall(cx, cy, 'right', wall_lines, fallback_wall_lines=wall_lines_fb)
         du = find_room_wall(cx, cy, 'up', wall_lines, fallback_wall_lines=wall_lines_fb)
@@ -415,7 +462,13 @@ def detect_rooms(pdf_data):
 
         width_m = (dl + dr) * pts_to_m
         height_m = (du + dd) * pts_to_m
-        area_m2 = width_m * height_m
+        ray_area = width_m * height_m
+
+        # Use grid area if available and reasonable, else ray-cast area
+        if grid_area and MIN_ROOM_AREA_M2 <= grid_area <= MAX_ROOM_AREA_M2:
+            area_m2 = grid_area
+        else:
+            area_m2 = ray_area
 
         if area_m2 < MIN_ROOM_AREA_M2 or area_m2 > MAX_ROOM_AREA_M2:
             continue
