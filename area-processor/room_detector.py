@@ -228,8 +228,21 @@ def find_room_wall(cx, cy, direction, wall_lines, grid_spacing=17, grid_tol=2.5)
         return positions[best_with_long_pair][0]
 
     # Priority 2: Last wall pair in the nearby cluster
-    if last_pair_inner is not None and last_pair_inner > first_non_grid_dist + 3:
-        return last_pair_inner
+    # BUT only if the first non-grid position doesn't already have a LONG pair partner
+    # (if it does, the first non-grid IS the wall, not a soffit)
+    first_ng_has_long_pair = False
+    if best_non_grid is not None:
+        for j in range(len(positions)):
+            if j == best_non_grid or grid_flags[j]:
+                continue  # Skip self and grid positions
+            gap = abs(positions[best_non_grid][0] - positions[j][0])
+            if 0.5 < gap < 8 and positions[j][1] >= 60:
+                first_ng_has_long_pair = True
+                break
+
+    if last_pair_inner is not None and not first_ng_has_long_pair:
+        if last_pair_inner > first_non_grid_dist + 3:
+            return last_pair_inner
 
     # Priority 3: First non-grid position
     return first_non_grid_dist
