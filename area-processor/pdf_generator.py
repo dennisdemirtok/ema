@@ -34,24 +34,69 @@ def generate_result_pdf(input_path: str, output_path: str, rooms: list,
     doc = fitz.open(input_path)
     page = doc[page_num]
 
-    # Sort largest rooms first so they're drawn behind smaller ones
-    rooms_sorted = sorted(rooms, key=lambda r: -r.area_m2)
+    # Build non-overlapping draw regions.
+    # Smaller rooms have priority (they were specifically measured).
+    # Larger rooms get their polygon clipped where smaller rooms overlap.
+    rooms_sorted = sorted(rooms, key=lambda r: r.area_m2)  # smallest first
+
+    # For each room, compute the list of rectangles to draw
+    # (the room rect minus any overlapping smaller-room rects)
+    drawn_rects = []  # List of (x0,y0,x1,y1) already claimed by smaller rooms
+
     for room in rooms_sorted:
         if len(room.polygon_pts) < 3:
             continue
 
-        # Draw filled polygon in pink
-        points = [fitz.Point(p[0], p[1]) for p in room.polygon_pts]
-        shape = page.new_shape()
-        shape.draw_polyline(points + [points[0]])
-        shape.finish(
-            color=ROOM_BORDER_COLOR,
-            fill=ROOM_FILL_COLOR,
-            fill_opacity=OVERLAY_OPACITY,
-            width=0.5,
-            stroke_opacity=0.6,
-        )
-        shape.commit()
+        p = room.polygon_pts
+        rx0, ry0 = p[0]
+        rx1, ry1 = p[2]
+
+        # Split this room's rectangle into non-overlapping sub-rectangles
+        # by subtracting all previously drawn rects
+        rects_to_draw = [(rx0, ry0, rx1, ry1)]
+
+        for dx0, dy0, dx1, dy1 in drawn_rects:
+            new_rects = []
+            for r in rects_to_draw:
+                # Subtract (dx0,dy0,dx1,dy1) from r
+                ax0, ay0, ax1, ay1 = r
+                # Check overlap
+                ox0 = max(ax0, dx0)
+                oy0 = max(ay0, dy0)
+                ox1 = min(ax1, dx1)
+                oy1 = min(ay1, dy1)
+                if ox0 >= ox1 or oy0 >= oy1:
+                    new_rects.append(r)  # No overlap, keep as-is
+                    continue
+                # Split into up to 4 non-overlapping parts
+                if ay0 < oy0:  # Top strip
+                    new_rects.append((ax0, ay0, ax1, oy0))
+                if ay1 > oy1:  # Bottom strip
+                    new_rects.append((ax0, oy1, ax1, ay1))
+                if ax0 < ox0:  # Left strip (within overlap y-range)
+                    new_rects.append((ax0, oy0, ox0, oy1))
+                if ax1 > ox1:  # Right strip
+                    new_rects.append((ox1, oy0, ax1, oy1))
+            rects_to_draw = new_rects
+
+        # Draw all sub-rectangles for this room
+        for sx0, sy0, sx1, sy1 in rects_to_draw:
+            if sx1 - sx0 < 1 or sy1 - sy0 < 1:
+                continue
+            rect = fitz.Rect(sx0, sy0, sx1, sy1)
+            shape = page.new_shape()
+            shape.draw_rect(rect)
+            shape.finish(
+                color=ROOM_BORDER_COLOR,
+                fill=ROOM_FILL_COLOR,
+                fill_opacity=OVERLAY_OPACITY,
+                width=0.3,
+                stroke_opacity=0.4,
+            )
+            shape.commit()
+
+        # Add this room to claimed rects
+        drawn_rects.append((rx0, ry0, rx1, ry1))
 
         # Add label: "Undertak\nXX,XX m²" at centroid
         cx, cy = room.centroid_pts
