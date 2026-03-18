@@ -1,10 +1,12 @@
 """
 PDF Result Generator.
-Fills ceiling areas with pink, masks excluded zones, adds room labels.
+Fills ceiling areas with pink using room polygons + zone backgrounds,
+all drawn in a SINGLE shape to avoid double-opacity.
+Masks excluded zones (Bef, Hiss, Trapphus) with white.
 """
 
 import fitz
-from room_detector import Room, is_h, is_v
+from room_detector import Room, should_exclude_room, find_room_wall, is_h, is_v
 
 
 ROOM_FILL_COLOR = (1.0, 0.75, 0.80)
@@ -12,7 +14,7 @@ ROOM_BORDER_COLOR = (0.80, 0.40, 0.55)
 LABEL_FONT_SIZE = 9
 LABEL_COLOR = (0.1, 0.1, 0.1)
 AREA_COLOR = (0.15, 0.15, 0.4)
-PAD = 4  # padding around zones
+EXPAND = 4  # Expand each room rect to fill wall gaps
 
 
 def generate_result_pdf(input_path: str, output_path: str, rooms: list,
@@ -25,42 +27,58 @@ def generate_result_pdf(input_path: str, output_path: str, rooms: list,
         doc.close()
         return output_path
 
-    # ── Compute ceiling zones from room positions ──
-    # Group rooms by centroid Y into 3 bands
-    band1, band2, band3 = [], [], []
-    for r in rooms:
-        cy = r.centroid_pts[1]
-        if cy < 610:
-            band1.append(r)
-        elif cy < 875:
-            band2.append(r)
-        else:
-            band3.append(r)
+    # ── Collect ALL rectangles to fill (rooms + zone backgrounds) ──
+    all_rects = []
 
-    # Compute zone rectangles (bounding box of each band)
-    zones = []
-    for band in [band1, band2, band3]:
-        if not band:
+    # Add each room rectangle (expanded to fill wall gaps)
+    for room in rooms:
+        if len(room.polygon_pts) < 3:
             continue
-        x0 = min(r.polygon_pts[0][0] for r in band) - PAD
-        y0 = min(r.polygon_pts[0][1] for r in band) - PAD
-        x1 = max(r.polygon_pts[2][0] for r in band) + PAD
-        y1 = max(r.polygon_pts[2][1] for r in band) + PAD
-        zones.append((x0, y0, x1, y1))
+        p = room.polygon_pts
+        all_rects.append(fitz.Rect(
+            p[0][0] - EXPAND, p[0][1] - EXPAND,
+            p[2][0] + EXPAND, p[2][1] + EXPAND
+        ))
 
-    # ── STEP 1: Draw pink zone backgrounds ──
+    # Add zone backgrounds to fill corridor/gap areas between rooms
+    # Group rooms by band (top offices, middle, studios)
+    band1 = [r for r in rooms if r.centroid_pts[1] < 610]  # top offices
+    band2 = [r for r in rooms if 610 <= r.centroid_pts[1] < 875]  # middle
+    band3 = [r for r in rooms if r.centroid_pts[1] >= 875]  # studios
+
+    for band in [band1, band2, band3]:
+        if len(band) < 2:
+            continue
+        x0 = min(r.polygon_pts[0][0] for r in band) - EXPAND
+        y0 = min(r.polygon_pts[0][1] for r in band) - EXPAND
+        x1 = max(r.polygon_pts[2][0] for r in band) + EXPAND
+        y1 = max(r.polygon_pts[2][1] for r in band) + EXPAND
+        all_rects.append(fitz.Rect(x0, y0, x1, y1))
+
+    # Connect band1 and band2 (they share the corridor zone)
+    if band1 and band2:
+        x0 = min(
+            min(r.polygon_pts[0][0] for r in band1),
+            min(r.polygon_pts[0][0] for r in band2)
+        ) - EXPAND
+        x1 = max(
+            max(r.polygon_pts[2][0] for r in band1),
+            max(r.polygon_pts[2][0] for r in band2)
+        ) + EXPAND
+        y0 = min(r.polygon_pts[0][1] for r in band1) - EXPAND
+        y1 = max(r.polygon_pts[2][1] for r in band2) + EXPAND
+        all_rects.append(fitz.Rect(x0, y0, x1, y1))
+
+    # ── STEP 1: Draw ALL rects in ONE shape (no double-opacity!) ──
     fill = page.new_shape()
-    for z in zones:
-        fill.draw_rect(fitz.Rect(z[0], z[1], z[2], z[3]))
+    for rect in all_rects:
+        fill.draw_rect(rect)
     fill.finish(color=None, fill=ROOM_FILL_COLOR, fill_opacity=0.40, width=0)
     fill.commit()
 
     # ── STEP 2: Mask excluded areas with white ──
-    # Find Bef/Hiss/Trapphus zones and cover them with white
-    import pdf_parser
-    pdf_data = pdf_parser.extract_pdf_data(input_path)
-
-    from room_detector import find_room_wall, should_exclude_room
+    import pdf_parser as _pp
+    pdf_data = _pp.extract_pdf_data(input_path)
     wall_lines = [l for l in pdf_data.wall_lines if l.length >= 30]
 
     mask = page.new_shape()
@@ -72,9 +90,8 @@ def generate_result_pdf(input_path: str, output_path: str, rooms: list,
         dr = find_room_wall(cx, cy, 'right', wall_lines)
         du = find_room_wall(cx, cy, 'up', wall_lines)
         dd = find_room_wall(cx, cy, 'down', wall_lines)
-        # White rectangle to cover the pink
-        mask.draw_rect(fitz.Rect(cx - dl + 1, cy - du + 1,
-                                  cx + dr - 1, cy + dd - 1))
+        mask.draw_rect(fitz.Rect(cx - dl + 2, cy - du + 2,
+                                  cx + dr - 2, cy + dd - 2))
     mask.finish(color=None, fill=(1, 1, 1), fill_opacity=1.0, width=0)
     mask.commit()
 
@@ -85,7 +102,7 @@ def generate_result_pdf(input_path: str, output_path: str, rooms: list,
             continue
         p = room.polygon_pts
         border.draw_rect(fitz.Rect(p[0][0], p[0][1], p[2][0], p[2][1]))
-    border.finish(color=ROOM_BORDER_COLOR, fill=None, width=0.4, stroke_opacity=0.35)
+    border.finish(color=ROOM_BORDER_COLOR, fill=None, width=0.4, stroke_opacity=0.3)
     border.commit()
 
     # ── STEP 4: Labels ──
