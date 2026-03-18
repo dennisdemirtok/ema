@@ -79,17 +79,21 @@ export async function POST(request: NextRequest) {
     })
     .eq("id", job.id);
 
-  // Trigger Python processing in background
+  // Trigger Python processing directly (no internal fetch needed)
   try {
-    const baseUrl = request.nextUrl.origin;
-    fetch(`${baseUrl}/api/area/process`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Cookie: request.headers.get("cookie") || "",
-      },
-      body: JSON.stringify({ job_id: job.id }),
-    }).catch((err) => console.error("Failed to trigger processor:", err));
+    const { exec } = require("child_process");
+    const processorPath = require("path");
+    const processorDir = processorPath.resolve(process.cwd(), "area-processor");
+    const pythonBin = process.env.NODE_ENV === "production"
+      ? "/opt/venv/bin/python"
+      : "python3";
+    const cmd = `cd "${processorDir}" && ${pythonBin} processor.py "${job.id}"`;
+    console.log(`[area-processor] Starting: ${cmd}`);
+    exec(cmd, { timeout: 300000 }, (error: any, stdout: string, stderr: string) => {
+      if (stdout) console.log("[area-processor stdout]", stdout);
+      if (stderr) console.error("[area-processor stderr]", stderr);
+      if (error) console.error("[area-processor error]", error.message);
+    });
   } catch (err) {
     console.error("Failed to trigger processor:", err);
   }
