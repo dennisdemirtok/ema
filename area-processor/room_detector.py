@@ -75,7 +75,7 @@ def find_room_wall(cx, cy, direction, wall_lines, grid_spacing=17, grid_tol=2.5)
     4. Among non-grid: prefer positions with long-wall pairs
     5. Fallback: first non-grid position
     """
-    raw = find_all_in_direction(cx, cy, direction, wall_lines, min_dist=3)
+    raw = find_all_in_direction(cx, cy, direction, wall_lines, min_dist=2)
     if not raw:
         return 1500
 
@@ -115,7 +115,7 @@ def find_room_wall(cx, cy, direction, wall_lines, grid_spacing=17, grid_tol=2.5)
         else:
             if run_start is not None:
                 run_len = i - run_start
-                if run_len >= 2:
+                if run_len >= 1:
                     grid_runs.append((run_start, i))  # positions run_start..i
                     for j in range(run_start, i + 1):
                         grid_flags[j] = True
