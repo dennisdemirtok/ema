@@ -65,7 +65,8 @@ def find_all_in_direction(cx, cy, direction, wall_lines, min_dist=3, max_dist=15
     return results
 
 
-def find_room_wall(cx, cy, direction, wall_lines, grid_spacing=17, grid_tol=2.5):
+def find_room_wall(cx, cy, direction, wall_lines, grid_spacing=17, grid_tol=2.5,
+                   fallback_wall_lines=None):
     """
     Find the room wall using consecutive-spacing grid detection.
 
@@ -163,6 +164,16 @@ def find_room_wall(cx, cy, direction, wall_lines, grid_spacing=17, grid_tol=2.5)
         if last_grid_idx < len(positions) - 1:
             next_gap = positions[last_grid_idx + 1][0] - d_last
             if next_gap > grid_spacing * 2.5:
+                # If gap is enormous (>200pt), check for door header segments (29-30pt)
+                # just past the grid that are filtered by MIN_WALL_LEN=30
+                if next_gap > 200 and fallback_wall_lines is not None:
+                    fb_raw = find_all_in_direction(cx, cy, direction,
+                                                   fallback_wall_lines, min_dist=1)
+                    for fd, fl in fb_raw:
+                        # Must be ~1 grid spacing away (the expected next wall position)
+                        offset = fd - d_last
+                        if grid_spacing * 0.8 < offset < grid_spacing * 1.3 and fl >= 29:
+                            return fd
                 grid_flags[last_grid_idx] = False
                 return d_last
         elif last_grid_idx == len(positions) - 1:
@@ -361,7 +372,9 @@ def is_small_room_label(text):
 def detect_rooms(pdf_data):
     """Detect rooms using ray-casting with consecutive-spacing grid detection."""
     MIN_WALL_LEN = 30
+    MIN_WALL_LEN_FB = 25  # Fallback for door header segments
     wall_lines = [l for l in pdf_data.wall_lines if l.length >= MIN_WALL_LEN]
+    wall_lines_fb = [l for l in pdf_data.wall_lines if l.length >= MIN_WALL_LEN_FB]
     pts_to_m = pdf_data.pts_to_m
 
     print(f"    Wall lines (>={MIN_WALL_LEN}pt): {len(wall_lines)}")
@@ -394,10 +407,10 @@ def detect_rooms(pdf_data):
             continue
 
         # Normal rooms: full grid-aware detection
-        dl = find_room_wall(cx, cy, 'left', wall_lines)
-        dr = find_room_wall(cx, cy, 'right', wall_lines)
-        du = find_room_wall(cx, cy, 'up', wall_lines)
-        dd = find_room_wall(cx, cy, 'down', wall_lines)
+        dl = find_room_wall(cx, cy, 'left', wall_lines, fallback_wall_lines=wall_lines_fb)
+        dr = find_room_wall(cx, cy, 'right', wall_lines, fallback_wall_lines=wall_lines_fb)
+        du = find_room_wall(cx, cy, 'up', wall_lines, fallback_wall_lines=wall_lines_fb)
+        dd = find_room_wall(cx, cy, 'down', wall_lines, fallback_wall_lines=wall_lines_fb)
 
         width_m = (dl + dr) * pts_to_m
         height_m = (du + dd) * pts_to_m
