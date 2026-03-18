@@ -101,33 +101,8 @@ def _compute_grid_regions(grid_lines, excluded_zones, max_y=1010):
         if len(lines) >= 2:
             rects.append((x_min, y_min, x_max, y_max))
 
-    # Merge overlapping rectangles
-    changed = True
-    while changed:
-        changed = False
-        merged = []
-        used = set()
-        for i in range(len(rects)):
-            if i in used:
-                continue
-            r = list(rects[i])
-            for j in range(i + 1, len(rects)):
-                if j in used:
-                    continue
-                s = rects[j]
-                # Check overlap with 5pt tolerance
-                if (r[0] - 5 <= s[2] and s[0] - 5 <= r[2] and
-                        r[1] - 5 <= s[3] and s[1] - 5 <= r[3]):
-                    r[0] = min(r[0], s[0])
-                    r[1] = min(r[1], s[1])
-                    r[2] = max(r[2], s[2])
-                    r[3] = max(r[3], s[3])
-                    used.add(j)
-                    changed = True
-            merged.append(tuple(r))
-            used.add(i)
-        rects = merged
-
+    # No merge — each group stays as its own rectangle.
+    # They're all drawn in one shape so overlapping areas look the same.
     return rects
 
 
