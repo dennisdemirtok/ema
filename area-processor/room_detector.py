@@ -446,7 +446,7 @@ def detect_rooms(pdf_data):
                 area_m2=round(area_m2, 2),
                 centroid_pts=(cx, cy),
                 confidence=0.70,
-                source="auto-small"
+                source="auto"
             ))
             continue
 
