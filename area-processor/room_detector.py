@@ -155,7 +155,7 @@ def find_room_wall(cx, cy, direction, wall_lines, grid_spacing=17, grid_tol=2.5,
             gap = abs(d_last - positions[j][0])
             if 0.5 < gap < 10:
                 longer = max(l_last, positions[j][1])
-                if longer > 200:
+                if longer > 180:
                     grid_flags[last_grid_idx] = False
                     return d_last  # Return the grid position (inner face)
 
