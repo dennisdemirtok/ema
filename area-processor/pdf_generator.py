@@ -21,6 +21,39 @@ def generate_result_pdf(input_path: str, output_path: str, rooms: list,
     doc = fitz.open(input_path)
     page = doc[page_num]
 
+    # ── STEP 0: Detect and draw ceiling ZONE backgrounds ──
+    # Like the builder's reference: large background rectangles that cover
+    # entire ceiling areas including corridors and spaces between rooms.
+    if rooms:
+        # Group rooms by centroid Y into bands
+        # Band 1: top offices (centroid y < 600)
+        # Band 2: middle zone (600 <= centroid y < 870)
+        # Band 3: bottom studios (centroid y >= 870)
+        bands = [[], [], []]
+        for r in rooms:
+            cy = r.centroid_pts[1]
+            if cy < 600:
+                bands[0].append(r)
+            elif cy < 870:
+                bands[1].append(r)
+            else:
+                bands[2].append(r)
+
+        zone_shape = page.new_shape()
+        for group in bands:
+            if not group:
+                continue
+            # Zone = bounding box of all room polygons in this band
+            zx0 = min(r.polygon_pts[0][0] for r in group) - EXPAND
+            zy0 = min(r.polygon_pts[0][1] for r in group) - EXPAND
+            zx1 = max(r.polygon_pts[2][0] for r in group) + EXPAND
+            zy1 = max(r.polygon_pts[2][1] for r in group) + EXPAND
+            zone_shape.draw_rect(fitz.Rect(zx0, zy0, zx1, zy1))
+
+        zone_shape.finish(color=None, fill=ROOM_FILL_COLOR,
+                          fill_opacity=0.35, width=0)
+        zone_shape.commit()
+
     # ── STEP 1: Draw ALL room fills expanded, each in its OWN shape ──
     # Draw largest first (background), smallest last (on top).
     # Each shape is separate so we get consistent opacity everywhere.
