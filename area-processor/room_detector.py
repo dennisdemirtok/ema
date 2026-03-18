@@ -327,15 +327,22 @@ def find_small_room_rect(cx, cy, wall_lines, pts_to_m2):
 
 
 # Room name patterns that indicate SMALL rooms (typically < 10 m²)
-SMALL_ROOM_PATTERNS = [
-    'wc', 'rwc', 'städ', 'hiss', 'passage', 'förråd', 'klkm',
-    'klädkammare', 'tvätt', 'teknik', 'server',
-]
+import re as _re
+
+# Patterns for rooms that benefit from wall-pair detection (typically small)
+_SMALL_ROOM_RE = _re.compile(
+    r'(?i)(?:^|\b)(?:wc|städ|hiss|förr[aå]d|klkm|klädkammare|tvätt|teknik|server|passage)(?:\b|$|\d)'
+)
 
 def is_small_room_label(text):
-    """Check if a label is for a typically small room."""
-    text_lower = text.lower()
-    return any(p in text_lower for p in SMALL_ROOM_PATTERNS)
+    """Check if a label is for a typically small room.
+    Matches WC, WC1 but NOT RWC, RWC1.
+    """
+    text_lower = text.lower().strip()
+    # Exclude RWC (it's medium-sized, works better with normal detection)
+    if text_lower.startswith('rwc'):
+        return False
+    return bool(_SMALL_ROOM_RE.search(text_lower))
 
 
 def detect_rooms(pdf_data):
