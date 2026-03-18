@@ -9,8 +9,8 @@ from room_detector import Room
 
 
 # Pink/Rosa color for all rooms (matches reference style)
-ROOM_FILL_COLOR = (1.0, 0.82, 0.86)  # Light pink/rosa
-ROOM_BORDER_COLOR = (0.85, 0.55, 0.65)  # Darker pink for border
+ROOM_FILL_COLOR = (1.0, 0.75, 0.80)  # Pink/rosa - clearly visible
+ROOM_BORDER_COLOR = (0.80, 0.40, 0.55)  # Darker pink for border
 LABEL_FONT_SIZE = 9
 LABEL_COLOR = (0.1, 0.1, 0.1)  # Near-black text
 AREA_COLOR = (0.15, 0.15, 0.4)  # Dark blue for area numbers
@@ -41,7 +41,7 @@ def generate_result_pdf(input_path: str, output_path: str, rooms: list,
         shape.finish(
             color=None,  # No border for fill layer
             fill=ROOM_FILL_COLOR,
-            fill_opacity=0.35,
+            fill_opacity=0.45,
             width=0,
         )
         shape.commit()

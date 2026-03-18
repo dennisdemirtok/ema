@@ -528,15 +528,54 @@ def detect_rooms(pdf_data):
             (cx + dr, cy + dd), (cx - dl, cy + dd),
         ]
 
-        # Choose best: grid if available and reasonable
-        if (grid_area and grid_polygon
+        # ALWAYS use ray-casting for the polygon (covers full room extent).
+        # Use grid-line-length for AREA when it's available and reasonable
+        # (grid is more accurate because it measures wall-to-wall directly).
+        polygon_pts = ray_polygon
+
+        if (grid_area
                 and MIN_ROOM_AREA_M2 <= grid_area <= MAX_ROOM_AREA_M2
-                and (ray_area <= 0 or grid_area >= ray_area * 0.70)):
+                and ray_area > 0
+                and grid_area >= ray_area * 0.5   # Grid shouldn't be much smaller
+                and grid_area <= ray_area * 1.1):  # Grid shouldn't be larger
             area_m2 = grid_area
-            polygon_pts = grid_polygon
         else:
             area_m2 = ray_area
-            polygon_pts = ray_polygon
+
+        # Post-process: clip polygons that extend into non-ceiling zones
+        # Find the rightmost full-height grid line to detect building boundary
+        if polygon_pts:
+            px1 = polygon_pts[2][0]  # right edge
+            py0 = polygon_pts[0][1]  # top
+            py1 = polygon_pts[2][1]  # bottom
+            room_h = py1 - py0
+            # Check if right edge has full-height grid lines or shorter ones
+            if room_h > 100 and px1 > cx + 100:
+                # Find the last x-position with full-height vertical grid lines
+                last_full_x = None
+                for line in pdf_data.wall_lines:
+                    if not is_v(line) or line.length < room_h * 0.9:
+                        continue
+                    lx = (line.x0 + line.x1) / 2
+                    if polygon_pts[0][0] < lx < px1:
+                        ymin = min(line.y0, line.y1)
+                        ymax = max(line.y0, line.y1)
+                        if ymin <= py0 + 10 and ymax >= py1 - 10:
+                            if last_full_x is None or lx > last_full_x:
+                                last_full_x = lx
+                if last_full_x and last_full_x < px1 - 20:
+                    # Clip to last full-height grid line + half grid spacing
+                    clip_x = last_full_x + 17
+                    if clip_x < px1:
+                        polygon_pts = [
+                            polygon_pts[0],
+                            (clip_x, polygon_pts[1][1]),
+                            (clip_x, polygon_pts[2][1]),
+                            polygon_pts[3],
+                        ]
+                        new_w = clip_x - polygon_pts[0][0]
+                        new_h = polygon_pts[2][1] - polygon_pts[0][1]
+                        area_m2 = round(new_w * new_h * pts_to_m ** 2, 2)
 
         if area_m2 < MIN_ROOM_AREA_M2 or area_m2 > MAX_ROOM_AREA_M2:
             continue
