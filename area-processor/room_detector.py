@@ -356,7 +356,7 @@ import re as _re
 
 # Patterns for rooms that benefit from wall-pair detection (typically small)
 _SMALL_ROOM_RE = _re.compile(
-    r'(?i)(?:^|\b)(?:wc|städ|hiss|förr[aå]d|klkm|klädkammare|tvätt|teknik|server|passage)(?:\b|$|\d)'
+    r'(?i)(?:^|\b)(?:wc|städ|hiss|förr[aå]d|klkm|klädkammare|tvätt|teknik|server)(?:\b|$|\d)'
 )
 
 def is_small_room_label(text):
