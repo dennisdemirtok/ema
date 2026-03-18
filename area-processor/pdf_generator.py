@@ -8,136 +8,93 @@ import fitz  # PyMuPDF
 from room_detector import Room
 
 
-# Pink/Rosa color for all rooms (matches reference style)
-ROOM_FILL_COLOR = (1.0, 0.75, 0.80)  # Pink/rosa - clearly visible
-ROOM_BORDER_COLOR = (0.80, 0.40, 0.55)  # Darker pink for border
+ROOM_FILL_COLOR = (1.0, 0.75, 0.80)
+ROOM_BORDER_COLOR = (0.80, 0.40, 0.55)
 LABEL_FONT_SIZE = 9
-LABEL_COLOR = (0.1, 0.1, 0.1)  # Near-black text
-AREA_COLOR = (0.15, 0.15, 0.4)  # Dark blue for area numbers
+LABEL_COLOR = (0.1, 0.1, 0.1)
+AREA_COLOR = (0.15, 0.15, 0.4)
+EXPAND = 4
 
 
 def generate_result_pdf(input_path: str, output_path: str, rooms: list,
                         page_num: int = 0) -> str:
-    """
-    Generate a result PDF with pink room overlays and "Undertak X,XX m²" labels.
-    """
     doc = fitz.open(input_path)
     page = doc[page_num]
 
-    # ── STEP 1: Draw all room fills (largest first, so smaller rooms paint on top) ──
+    # ── STEP 1: Draw ALL room fills expanded, each in its OWN shape ──
+    # Draw largest first (background), smallest last (on top).
+    # Each shape is separate so we get consistent opacity everywhere.
     rooms_sorted = sorted(rooms, key=lambda r: -r.area_m2)
 
     for room in rooms_sorted:
         if len(room.polygon_pts) < 3:
             continue
-
         p = room.polygon_pts
         rx0, ry0 = p[0]
         rx1, ry1 = p[2]
-
-        rect = fitz.Rect(rx0, ry0, rx1, ry1)
+        rect = fitz.Rect(rx0 - EXPAND, ry0 - EXPAND,
+                         rx1 + EXPAND, ry1 + EXPAND)
         shape = page.new_shape()
         shape.draw_rect(rect)
-        shape.finish(
-            color=None,  # No border for fill layer
-            fill=ROOM_FILL_COLOR,
-            fill_opacity=0.45,
-            width=0,
-        )
+        shape.finish(color=None, fill=ROOM_FILL_COLOR,
+                     fill_opacity=0.40, width=0)
         shape.commit()
 
-    # ── STEP 2: Draw room borders (thin lines to show room boundaries) ──
-    for room in rooms_sorted:
+    # ── STEP 2: Draw room borders ──
+    border_shape = page.new_shape()
+    for room in rooms:
         if len(room.polygon_pts) < 3:
             continue
-
         p = room.polygon_pts
-        rx0, ry0 = p[0]
-        rx1, ry1 = p[2]
+        border_shape.draw_rect(fitz.Rect(p[0][0], p[0][1], p[2][0], p[2][1]))
+    border_shape.finish(color=ROOM_BORDER_COLOR, fill=None,
+                        width=0.4, stroke_opacity=0.35)
+    border_shape.commit()
 
-        rect = fitz.Rect(rx0, ry0, rx1, ry1)
-        shape = page.new_shape()
-        shape.draw_rect(rect)
-        shape.finish(
-            color=ROOM_BORDER_COLOR,
-            fill=None,  # No fill, just border
-            width=0.5,
-            stroke_opacity=0.5,
-        )
-        shape.commit()
-
-    # ── STEP 3: Draw labels on top of everything ──
-    for room in rooms_sorted:
+    # ── STEP 3: Labels ──
+    for room in rooms:
         if len(room.polygon_pts) < 3:
             continue
 
         cx, cy = room.centroid_pts
-
-        # Format area with comma (Swedish format)
         area_str = f"{room.area_m2:.2f}".replace(".", ",")
-
         name_text = room.name or ""
-        undertak_text = "Undertak"
-        area_text = f"{area_str} m²"
 
-        # Calculate label dimensions
         lines_count = 3 if name_text else 2
-        max_text = max(len(undertak_text), len(area_text), len(name_text) if name_text else 0)
+        max_text = max(len("Undertak"), len(f"{area_str} m²"),
+                       len(name_text) if name_text else 0)
         text_width = max(max_text * LABEL_FONT_SIZE * 0.52, 50)
         text_height = LABEL_FONT_SIZE * (lines_count + 0.8)
 
         label_rect = fitz.Rect(
-            cx - text_width / 2,
-            cy - text_height / 2,
-            cx + text_width / 2,
-            cy + text_height / 2,
+            cx - text_width / 2, cy - text_height / 2,
+            cx + text_width / 2, cy + text_height / 2,
         )
 
-        # White label background
-        bg_shape = page.new_shape()
-        bg_shape.draw_rect(label_rect)
-        bg_shape.finish(
-            color=(0.7, 0.7, 0.7),
-            fill=(1, 1, 1),
-            fill_opacity=0.92,
-            width=0.3,
-        )
-        bg_shape.commit()
+        bg = page.new_shape()
+        bg.draw_rect(label_rect)
+        bg.finish(color=(0.7, 0.7, 0.7), fill=(1, 1, 1),
+                  fill_opacity=0.92, width=0.3)
+        bg.commit()
 
-        # Text positioning
         left_x = cx - text_width / 2 + 3
-        current_y = cy - text_height / 2 + LABEL_FONT_SIZE + 1
+        cur_y = cy - text_height / 2 + LABEL_FONT_SIZE + 1
 
         if name_text:
-            page.insert_text(
-                fitz.Point(left_x, current_y),
-                name_text,
-                fontsize=LABEL_FONT_SIZE - 1,
-                fontname="helv",
-                color=LABEL_COLOR,
-            )
-            current_y += LABEL_FONT_SIZE + 1
+            page.insert_text(fitz.Point(left_x, cur_y), name_text,
+                             fontsize=LABEL_FONT_SIZE - 1, fontname="helv",
+                             color=LABEL_COLOR)
+            cur_y += LABEL_FONT_SIZE + 1
 
-        # "Undertak" in bold
-        page.insert_text(
-            fitz.Point(left_x, current_y),
-            undertak_text,
-            fontsize=LABEL_FONT_SIZE,
-            fontname="hebo",
-            color=LABEL_COLOR,
-        )
-        current_y += LABEL_FONT_SIZE + 1
+        page.insert_text(fitz.Point(left_x, cur_y), "Undertak",
+                         fontsize=LABEL_FONT_SIZE, fontname="hebo",
+                         color=LABEL_COLOR)
+        cur_y += LABEL_FONT_SIZE + 1
 
-        # Area value
-        page.insert_text(
-            fitz.Point(left_x, current_y),
-            area_text,
-            fontsize=LABEL_FONT_SIZE,
-            fontname="helv",
-            color=AREA_COLOR,
-        )
+        page.insert_text(fitz.Point(left_x, cur_y), f"{area_str} m²",
+                         fontsize=LABEL_FONT_SIZE, fontname="helv",
+                         color=AREA_COLOR)
 
     doc.save(output_path)
     doc.close()
-
     return output_path
