@@ -372,12 +372,10 @@ def is_small_room_label(text):
 
 # Rooms to EXCLUDE from ceiling area calculation
 # - "Bef" (befintlig) = existing rooms, no new ceiling
-# - Hiss = elevator shaft, no ceiling
+# - Hiss = elevator shaft, no ceiling tiles
 # - Trapphus = stairwell, no ceiling tiles
-# - Korridor = corridor, typically separate calculation
-# - Plats för skrivare, ELC = utility areas without standard ceiling
 _EXCLUDE_RE = _re.compile(
-    r'(?i)(?:^bef\s|hiss|trapphus|plats för|^elc\b)'
+    r'(?i)(?:^bef\s|^hiss$|^hiss\s|trapphus)'
 )
 
 def should_exclude_room(text):
@@ -553,26 +551,12 @@ def detect_rooms(pdf_data):
             source="auto"
         ))
 
-    # ── Remove overlaps: each m² should only be counted once ──
-    # Smaller rooms "win" overlaps (they were specifically measured).
-    # Larger rooms get their area reduced by the overlap.
-    rooms_sorted = sorted(rooms, key=lambda r: r.area_m2)  # smallest first
-    for i, r1 in enumerate(rooms_sorted):
-        p1 = r1.polygon_pts
-        x1_0, y1_0 = p1[0]
-        x1_1, y1_1 = p1[2]
-        for j in range(i + 1, len(rooms_sorted)):
-            r2 = rooms_sorted[j]
-            p2 = r2.polygon_pts
-            x2_0, y2_0 = p2[0]
-            x2_1, y2_1 = p2[2]
-            # Calculate overlap
-            ox0, oy0 = max(x1_0, x2_0), max(y1_0, y2_0)
-            ox1, oy1 = min(x1_1, x2_1), min(y1_1, y2_1)
-            if ox0 < ox1 and oy0 < oy1:
-                overlap = (ox1 - ox0) * (oy1 - oy0) * pts_to_m ** 2
-                if overlap > 0.1:
-                    r2.area_m2 = round(r2.area_m2 - overlap, 2)
+    # NOTE: Overlap handling is done in pdf_generator.py (rendering only).
+    # Each room keeps its actual measured area — no subtraction here.
+    # The PDF renderer clips larger rooms around smaller ones to avoid double-pink.
 
-    print(f"    Rooms detected: {len(rooms)} (excluded {excluded}: Bef/Hiss/Trapphus/Korridor)")
+    # Filter out any rooms with invalid areas
+    rooms = [r for r in rooms if r.area_m2 >= MIN_ROOM_AREA_M2]
+
+    print(f"    Rooms detected: {len(rooms)} (excluded {excluded}: Bef/Hiss/Trapphus)")
     return rooms
