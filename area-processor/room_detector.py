@@ -464,8 +464,11 @@ def detect_rooms(pdf_data):
         height_m = (du + dd) * pts_to_m
         ray_area = width_m * height_m
 
-        # Use grid area if available and reasonable, else ray-cast area
-        if grid_area and MIN_ROOM_AREA_M2 <= grid_area <= MAX_ROOM_AREA_M2:
+        # Use grid area if available and reasonable, else ray-cast area.
+        # If grid area is much smaller than ray area, the grid doesn't cover
+        # the full room (e.g., Pausrum with partial ceiling) → prefer ray-cast.
+        if (grid_area and MIN_ROOM_AREA_M2 <= grid_area <= MAX_ROOM_AREA_M2
+                and (ray_area <= 0 or grid_area >= ray_area * 0.85)):
             area_m2 = grid_area
         else:
             area_m2 = ray_area
