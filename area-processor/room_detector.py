@@ -75,7 +75,7 @@ def find_room_wall(cx, cy, direction, wall_lines, grid_spacing=17, grid_tol=2.5)
     4. Among non-grid: prefer positions with long-wall pairs
     5. Fallback: first non-grid position
     """
-    raw = find_all_in_direction(cx, cy, direction, wall_lines, min_dist=2)
+    raw = find_all_in_direction(cx, cy, direction, wall_lines, min_dist=1)
     if not raw:
         return 1500
 
@@ -238,6 +238,106 @@ def find_room_wall(cx, cy, direction, wall_lines, grid_spacing=17, grid_tol=2.5)
     return positions[-1][0]
 
 
+def find_wall_pairs_nearby(cx, cy, wall_lines, max_search=120, min_len=20):
+    """Find structural wall pairs near a point.
+    Structural walls in CAD are drawn as double parallel lines (1-8pt apart).
+    Returns separate lists for horizontal and vertical wall pairs.
+    """
+    h_lines = []  # (y_pos, length) - horizontal lines
+    v_lines = []  # (x_pos, length) - vertical lines
+
+    for line in wall_lines:
+        if line.length < min_len:
+            continue
+        if is_h(line):
+            wall_y = (line.y0 + line.y1) / 2
+            if abs(wall_y - cy) < max_search:
+                x_min = min(line.x0, line.x1)
+                x_max = max(line.x0, line.x1)
+                if x_min - 5 <= cx <= x_max + 5:
+                    h_lines.append(wall_y)
+        elif is_v(line):
+            wall_x = (line.x0 + line.x1) / 2
+            if abs(wall_x - cx) < max_search:
+                y_min = min(line.y0, line.y1)
+                y_max = max(line.y0, line.y1)
+                if y_min - 5 <= cy <= y_max + 5:
+                    v_lines.append(wall_x)
+
+    # Deduplicate and sort
+    h_lines = sorted(set(round(y, 1) for y in h_lines))
+    v_lines = sorted(set(round(x, 1) for x in v_lines))
+
+    # Find wall pairs (two lines 1-8pt apart)
+    def find_pairs(positions):
+        pairs = []
+        used = set()
+        for i in range(len(positions)):
+            if i in used:
+                continue
+            for j in range(i + 1, len(positions)):
+                if j in used:
+                    continue
+                gap = positions[j] - positions[i]
+                if 1 < gap < 8:
+                    pairs.append((positions[i], positions[j]))
+                    used.add(i)
+                    used.add(j)
+                    break
+                if gap >= 8:
+                    break
+        return pairs
+
+    h_pairs = find_pairs(h_lines)
+    v_pairs = find_pairs(v_lines)
+    return h_pairs, v_pairs
+
+
+def find_small_room_rect(cx, cy, wall_lines, pts_to_m2):
+    """Find room rectangle for small rooms using wall pair detection."""
+    h_pairs, v_pairs = find_wall_pairs_nearby(cx, cy, wall_lines)
+
+    # Find the nearest wall pair above and below
+    h_above = [(p[0], p[1]) for p in h_pairs if p[1] < cy]
+    h_below = [(p[0], p[1]) for p in h_pairs if p[0] > cy]
+
+    # Find the nearest wall pair left and right
+    v_left = [(p[0], p[1]) for p in v_pairs if p[1] < cx]
+    v_right = [(p[0], p[1]) for p in v_pairs if p[0] > cx]
+
+    if not h_above or not h_below or not v_left or not v_right:
+        return None
+
+    # Use the nearest pair in each direction (inner face)
+    top = max(p[1] for p in h_above)      # bottom of top wall pair
+    bottom = min(p[0] for p in h_below)    # top of bottom wall pair
+    left = max(p[1] for p in v_left)       # right face of left wall pair
+    right = min(p[0] for p in v_right)     # left face of right wall pair
+
+    w = right - left
+    h = bottom - top
+    if w < 15 or h < 15:
+        return None
+
+    area = w * h * pts_to_m2
+    if area < 0.5 or area > 50:
+        return None
+
+    return (left, top, right, bottom, round(area, 2))
+
+
+# Room name patterns that indicate SMALL rooms (typically < 10 m²)
+SMALL_ROOM_PATTERNS = [
+    'wc', 'rwc', 'städ', 'hiss', 'passage', 'förråd', 'klkm',
+    'klädkammare', 'tvätt', 'teknik', 'server',
+]
+
+def is_small_room_label(text):
+    """Check if a label is for a typically small room."""
+    text_lower = text.lower()
+    return any(p in text_lower for p in SMALL_ROOM_PATTERNS)
+
+
 def detect_rooms(pdf_data):
     """Detect rooms using ray-casting with consecutive-spacing grid detection."""
     MIN_WALL_LEN = 30
@@ -252,6 +352,28 @@ def detect_rooms(pdf_data):
     for label in pdf_data.room_labels:
         cx, cy = label.center
 
+        if is_small_room_label(label.text):
+            # Small rooms: use wall pair detection (structural walls are double lines)
+            pts_to_m2 = pts_to_m ** 2
+            rect = find_small_room_rect(cx, cy, wall_lines, pts_to_m2)
+            if rect is None:
+                continue
+            left, top, right, bottom, area_m2 = rect
+            polygon_pts = [
+                (left, top), (right, top), (right, bottom), (left, bottom),
+            ]
+            rooms.append(Room(
+                name=label.text,
+                polygon_pts=polygon_pts,
+                polygon_m=[(p[0] * pts_to_m, p[1] * pts_to_m) for p in polygon_pts],
+                area_m2=round(area_m2, 2),
+                centroid_pts=(cx, cy),
+                confidence=0.70,
+                source="auto-small"
+            ))
+            continue
+
+        # Normal rooms: full grid-aware detection
         dl = find_room_wall(cx, cy, 'left', wall_lines)
         dr = find_room_wall(cx, cy, 'right', wall_lines)
         du = find_room_wall(cx, cy, 'up', wall_lines)

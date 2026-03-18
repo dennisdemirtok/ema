@@ -213,6 +213,9 @@ def identify_room_labels(text_blocks: list) -> list:
         re.compile(r"(?i)garage"),
         re.compile(r"(?i)cykel"),
         re.compile(r"(?i)bef\s"),  # "Bef kontor", "Bef konferens"
+        re.compile(r"(?i)oidentifierade"),  # "Oidentifierade utrymmen"
+        re.compile(r"(?i)skrivare"),  # "Skrivare/frd"
+        re.compile(r"(?i)utrymm"),  # "Utrymme", "Utrymmen"
     ]
 
     # Minimum text block height to filter out tiny annotation text
