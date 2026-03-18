@@ -1,47 +1,69 @@
 """
 PDF Result Generator.
-Detects ceiling grid areas and fills them with pink. Adds room labels.
+Fills ceiling areas with pink, masks excluded zones, adds room labels.
 """
 
 import fitz
 from room_detector import Room, is_h, is_v
+
 
 ROOM_FILL_COLOR = (1.0, 0.75, 0.80)
 ROOM_BORDER_COLOR = (0.80, 0.40, 0.55)
 LABEL_FONT_SIZE = 9
 LABEL_COLOR = (0.1, 0.1, 0.1)
 AREA_COLOR = (0.15, 0.15, 0.4)
-GRID_SPACING = 17
-GRID_TOL = 3
+PAD = 4  # padding around zones
 
 
-def _find_grid_h_lines(wall_lines):
-    """Find horizontal lines that are part of a ceiling grid pattern."""
-    h_lines = []
-    for line in wall_lines:
-        if not is_h(line) or line.length < 40 or line.length > 500:
+def generate_result_pdf(input_path: str, output_path: str, rooms: list,
+                        page_num: int = 0) -> str:
+    doc = fitz.open(input_path)
+    page = doc[page_num]
+
+    if not rooms:
+        doc.save(output_path)
+        doc.close()
+        return output_path
+
+    # ── Compute ceiling zones from room positions ──
+    # Group rooms by centroid Y into 3 bands
+    band1, band2, band3 = [], [], []
+    for r in rooms:
+        cy = r.centroid_pts[1]
+        if cy < 610:
+            band1.append(r)
+        elif cy < 875:
+            band2.append(r)
+        else:
+            band3.append(r)
+
+    # Compute zone rectangles (bounding box of each band)
+    zones = []
+    for band in [band1, band2, band3]:
+        if not band:
             continue
-        y = (line.y0 + line.y1) / 2
-        h_lines.append((y, min(line.x0, line.x1), max(line.x0, line.x1), line.length))
-    h_lines.sort()
+        x0 = min(r.polygon_pts[0][0] for r in band) - PAD
+        y0 = min(r.polygon_pts[0][1] for r in band) - PAD
+        x1 = max(r.polygon_pts[2][0] for r in band) + PAD
+        y1 = max(r.polygon_pts[2][1] for r in band) + PAD
+        zones.append((x0, y0, x1, y1))
 
-    grid = []
-    for i, (y, x0, x1, l) in enumerate(h_lines):
-        for j, (y2, x02, x12, l2) in enumerate(h_lines):
-            if i == j:
-                continue
-            if abs(abs(y2 - y) - GRID_SPACING) < GRID_TOL:
-                if abs(l - l2) < 30 and abs(x0 - x02) < 30:
-                    grid.append((y, x0, x1))
-                    break
-    return grid
+    # ── STEP 1: Draw pink zone backgrounds ──
+    fill = page.new_shape()
+    for z in zones:
+        fill.draw_rect(fitz.Rect(z[0], z[1], z[2], z[3]))
+    fill.finish(color=None, fill=ROOM_FILL_COLOR, fill_opacity=0.40, width=0)
+    fill.commit()
 
+    # ── STEP 2: Mask excluded areas with white ──
+    # Find Bef/Hiss/Trapphus zones and cover them with white
+    import pdf_parser
+    pdf_data = pdf_parser.extract_pdf_data(input_path)
 
-def _build_excluded_zones(pdf_data):
-    """Find zones that should NOT get pink."""
     from room_detector import find_room_wall, should_exclude_room
     wall_lines = [l for l in pdf_data.wall_lines if l.length >= 30]
-    zones = []
+
+    mask = page.new_shape()
     for label in pdf_data.room_labels:
         if not should_exclude_room(label.text):
             continue
@@ -50,95 +72,23 @@ def _build_excluded_zones(pdf_data):
         dr = find_room_wall(cx, cy, 'right', wall_lines)
         du = find_room_wall(cx, cy, 'up', wall_lines)
         dd = find_room_wall(cx, cy, 'down', wall_lines)
-        zones.append((cx - dl - 3, cy - du - 3, cx + dr + 3, cy + dd + 3))
-    return zones
+        # White rectangle to cover the pink
+        mask.draw_rect(fitz.Rect(cx - dl + 1, cy - du + 1,
+                                  cx + dr - 1, cy + dd - 1))
+    mask.finish(color=None, fill=(1, 1, 1), fill_opacity=1.0, width=0)
+    mask.commit()
 
-
-def _point_in_zone(y, x, zones):
-    for zx0, zy0, zx1, zy1 in zones:
-        if zx0 <= x <= zx1 and zy0 <= y <= zy1:
-            return True
-    return False
-
-
-def _compute_grid_regions(grid_lines, excluded_zones, max_y=1010):
-    """Merge grid lines into solid rectangular regions.
-
-    Groups grid lines with similar x-range, then for each group
-    creates a rectangle from min_y to max_y spanning the x-range.
-    """
-    # Filter
-    filtered = []
-    for y, x0, x1 in grid_lines:
-        if y > max_y:
-            continue
-        mx = (x0 + x1) / 2
-        if _point_in_zone(y, mx, excluded_zones):
-            continue
-        filtered.append((y, x0, x1))
-
-    if not filtered:
-        return []
-
-    # Group by similar x-range: lines within 20pt of each other in x
-    # belong to the same room/region
-    from collections import defaultdict
-
-    # Round x0 and x1 to nearest 15pt to group similar lines
-    groups = defaultdict(list)
-    for y, x0, x1 in filtered:
-        key = (round(x0 / 15) * 15, round(x1 / 15) * 15)
-        groups[key].append((y, x0, x1))
-
-    # For each group, compute the bounding rectangle
-    rects = []
-    for (kx0, kx1), lines in groups.items():
-        y_min = min(y for y, _, _ in lines) - GRID_SPACING / 2
-        y_max = max(y for y, _, _ in lines) + GRID_SPACING / 2
-        x_min = min(x0 for _, x0, _ in lines)
-        x_max = max(x1 for _, _, x1 in lines)
-        # Only include if it has multiple lines (actual grid, not lone line)
-        if len(lines) >= 2:
-            rects.append((x_min, y_min, x_max, y_max))
-
-    # No merge — each group stays as its own rectangle.
-    # They're all drawn in one shape so overlapping areas look the same.
-    return rects
-
-
-def generate_result_pdf(input_path: str, output_path: str, rooms: list,
-                        page_num: int = 0) -> str:
-    doc = fitz.open(input_path)
-    page = doc[page_num]
-
-    import pdf_parser
-    pdf_data = pdf_parser.extract_pdf_data(input_path)
-
-    excluded = _build_excluded_zones(pdf_data)
-    h_grid = _find_grid_h_lines(pdf_data.wall_lines)
-
-    # ── STEP 1: Compute solid grid regions and draw them ──
-    regions = _compute_grid_regions(h_grid, excluded)
-
-    fill_shape = page.new_shape()
-    for x0, y0, x1, y1 in regions:
-        fill_shape.draw_rect(fitz.Rect(x0, y0, x1, y1))
-    fill_shape.finish(color=None, fill=ROOM_FILL_COLOR,
-                      fill_opacity=0.40, width=0)
-    fill_shape.commit()
-
-    # ── STEP 2: Room borders ──
-    border_shape = page.new_shape()
+    # ── STEP 3: Room borders ──
+    border = page.new_shape()
     for room in rooms:
         if len(room.polygon_pts) < 3:
             continue
         p = room.polygon_pts
-        border_shape.draw_rect(fitz.Rect(p[0][0], p[0][1], p[2][0], p[2][1]))
-    border_shape.finish(color=ROOM_BORDER_COLOR, fill=None,
-                        width=0.4, stroke_opacity=0.35)
-    border_shape.commit()
+        border.draw_rect(fitz.Rect(p[0][0], p[0][1], p[2][0], p[2][1]))
+    border.finish(color=ROOM_BORDER_COLOR, fill=None, width=0.4, stroke_opacity=0.35)
+    border.commit()
 
-    # ── STEP 3: Labels ──
+    # ── STEP 4: Labels ──
     for room in rooms:
         if len(room.polygon_pts) < 3:
             continue
