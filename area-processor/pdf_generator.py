@@ -25,6 +25,23 @@ def generate_result_pdf(input_path: str, output_path: str, rooms: list,
         doc.close()
         return output_path
 
+    # ── Post-process: merge Korridor rooms into one continuous rect ──
+    # The corridor is detected as 2 strips but should be one continuous area.
+    korridor_rooms = [r for r in rooms if r.name and 'korridor' in r.name.lower()]
+    if len(korridor_rooms) >= 2:
+        # Merge all korridor rects into bounding box
+        kx0 = min(r.polygon_pts[0][0] for r in korridor_rooms)
+        ky0 = min(r.polygon_pts[0][1] for r in korridor_rooms)
+        kx1 = max(r.polygon_pts[2][0] for r in korridor_rooms)
+        ky1 = max(r.polygon_pts[2][1] for r in korridor_rooms)
+        # Update first korridor room to cover the merged area
+        total_area = round((kx1 - kx0) * (ky1 - ky0) * 0.0352778 ** 2, 2)
+        korridor_rooms[0].polygon_pts = [(kx0, ky0), (kx1, ky0), (kx1, ky1), (kx0, ky1)]
+        korridor_rooms[0].area_m2 = total_area
+        # Remove the extra korridor rooms
+        for kr in korridor_rooms[1:]:
+            rooms.remove(kr)
+
     # ── Draw ONLY the measured room rectangles ──
     # ONE shape = single fill layer, no double-opacity
     fill = page.new_shape()
