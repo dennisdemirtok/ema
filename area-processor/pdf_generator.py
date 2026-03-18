@@ -34,7 +34,9 @@ def generate_result_pdf(input_path: str, output_path: str, rooms: list,
     doc = fitz.open(input_path)
     page = doc[page_num]
 
-    for room in rooms:
+    # Sort largest rooms first so they're drawn behind smaller ones
+    rooms_sorted = sorted(rooms, key=lambda r: -r.area_m2)
+    for room in rooms_sorted:
         if len(room.polygon_pts) < 3:
             continue
 

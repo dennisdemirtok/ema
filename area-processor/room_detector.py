@@ -377,7 +377,7 @@ def is_small_room_label(text):
 # - Korridor = corridor, typically separate calculation
 # - Plats för skrivare, ELC = utility areas without standard ceiling
 _EXCLUDE_RE = _re.compile(
-    r'(?i)(?:^bef\s|hiss|trapphus|korridor|plats för|^elc\b)'
+    r'(?i)(?:^bef\s|hiss|trapphus|plats för|^elc\b)'
 )
 
 def should_exclude_room(text):
@@ -385,7 +385,7 @@ def should_exclude_room(text):
     return bool(_EXCLUDE_RE.search(text.strip()))
 
 
-def _grid_line_area(cx, cy, all_wall_lines, pts_to_m, search_radius=80):
+def _grid_line_dims(cx, cy, all_wall_lines, search_radius=80):
     """Compute room area from ceiling grid line lengths.
 
     Grid lines (undertaksplattor 600x600mm) span wall-to-wall within a room.
@@ -425,7 +425,44 @@ def _grid_line_area(cx, cy, all_wall_lines, pts_to_m, search_radius=80):
     if h_count < 2 or v_count < 2:
         return None  # Not enough grid lines to be confident
 
-    return round(h_best * v_best * pts_to_m ** 2, 2)
+    return h_best, v_best
+
+
+def get_grid_room_dims(cx, cy, all_wall_lines, search_radius=80):
+    """Wrapper that returns (width_pt, height_pt) or (None, None)."""
+    return _grid_line_dims(cx, cy, all_wall_lines, search_radius)
+
+
+def _get_grid_polygon(cx, cy, all_wall_lines, grid_w, grid_h, search_radius=80):
+    """Build polygon from grid line start positions."""
+    from statistics import median
+
+    x_starts = []
+    for line in all_wall_lines:
+        if not is_h(line):
+            continue
+        y = (line.y0 + line.y1) / 2
+        if abs(y - cy) < search_radius and abs(line.length - grid_w) < 5:
+            xmin = min(line.x0, line.x1)
+            if abs(xmin - cx) < grid_w:  # Line starts near the room
+                x_starts.append(xmin)
+
+    y_starts = []
+    for line in all_wall_lines:
+        if not is_v(line):
+            continue
+        x = (line.x0 + line.x1) / 2
+        if abs(x - cx) < search_radius and abs(line.length - grid_h) < 5:
+            ymin = min(line.y0, line.y1)
+            if abs(ymin - cy) < grid_h:
+                y_starts.append(ymin)
+
+    if not x_starts or not y_starts:
+        return None
+
+    x0 = median(x_starts)
+    y0 = median(y_starts)
+    return [(x0, y0), (x0 + grid_w, y0), (x0 + grid_w, y0 + grid_h), (x0, y0 + grid_h)]
 
 
 def detect_rooms(pdf_data):
@@ -471,38 +508,40 @@ def detect_rooms(pdf_data):
             ))
             continue
 
-        # PRIMARY: Use grid-line-length for area (most accurate)
-        # Grid lines span wall-to-wall; their length = room dimension
-        grid_area = _grid_line_area(cx, cy, pdf_data.wall_lines, pts_to_m)
+        # PRIMARY: Use grid-line-length for area AND polygon (most accurate)
+        grid_w, grid_h = get_grid_room_dims(cx, cy, pdf_data.wall_lines)
+        grid_area = None
+        grid_polygon = None
 
-        # Ray-casting for polygon placement
+        if grid_w and grid_h:
+            grid_area = round(grid_w * grid_h * pts_to_m ** 2, 2)
+            # Build polygon from grid line positions (where they actually start)
+            grid_polygon = _get_grid_polygon(cx, cy, pdf_data.wall_lines, grid_w, grid_h)
+
+        # Ray-casting for fallback
         dl = find_room_wall(cx, cy, 'left', wall_lines, fallback_wall_lines=wall_lines_fb)
         dr = find_room_wall(cx, cy, 'right', wall_lines, fallback_wall_lines=wall_lines_fb)
         du = find_room_wall(cx, cy, 'up', wall_lines, fallback_wall_lines=wall_lines_fb)
         dd = find_room_wall(cx, cy, 'down', wall_lines, fallback_wall_lines=wall_lines_fb)
 
-        width_m = (dl + dr) * pts_to_m
-        height_m = (du + dd) * pts_to_m
-        ray_area = width_m * height_m
+        ray_area = (dl + dr) * (du + dd) * pts_to_m ** 2
+        ray_polygon = [
+            (cx - dl, cy - du), (cx + dr, cy - du),
+            (cx + dr, cy + dd), (cx - dl, cy + dd),
+        ]
 
-        # Use grid area if available and reasonable, else ray-cast area.
-        # If grid area is much smaller than ray area, the grid doesn't cover
-        # the full room (e.g., Pausrum with partial ceiling) → prefer ray-cast.
-        if (grid_area and MIN_ROOM_AREA_M2 <= grid_area <= MAX_ROOM_AREA_M2
-                and (ray_area <= 0 or grid_area >= ray_area * 0.85)):
+        # Choose best: grid if available and reasonable
+        if (grid_area and grid_polygon
+                and MIN_ROOM_AREA_M2 <= grid_area <= MAX_ROOM_AREA_M2
+                and (ray_area <= 0 or grid_area >= ray_area * 0.70)):
             area_m2 = grid_area
+            polygon_pts = grid_polygon
         else:
             area_m2 = ray_area
+            polygon_pts = ray_polygon
 
         if area_m2 < MIN_ROOM_AREA_M2 or area_m2 > MAX_ROOM_AREA_M2:
             continue
-
-        polygon_pts = [
-            (cx - dl, cy - du),
-            (cx + dr, cy - du),
-            (cx + dr, cy + dd),
-            (cx - dl, cy + dd),
-        ]
 
         rooms.append(Room(
             name=label.text,
