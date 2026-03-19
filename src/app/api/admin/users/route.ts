@@ -76,6 +76,26 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({ user: data });
 }
 
+export async function DELETE(request: NextRequest) {
+  const { accessToken } = await createServerSupabase();
+  if (!accessToken) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const id = request.nextUrl.searchParams.get("id");
+  if (!id) return NextResponse.json({ error: "ID krävs" }, { status: 400 });
+
+  const serviceClient = getServiceClient();
+
+  // Delete from tr_users first
+  const { error: dbError } = await serviceClient.from("tr_users").delete().eq("id", id);
+  if (dbError) return NextResponse.json({ error: `DB: ${dbError.message}` }, { status: 500 });
+
+  // Delete from Supabase Auth
+  const { error: authError } = await serviceClient.auth.admin.deleteUser(id);
+  if (authError) return NextResponse.json({ error: `Auth: ${authError.message}` }, { status: 500 });
+
+  return NextResponse.json({ success: true });
+}
+
 export async function PATCH(request: NextRequest) {
   const { supabase, accessToken } = await createServerSupabase();
   if (!accessToken) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

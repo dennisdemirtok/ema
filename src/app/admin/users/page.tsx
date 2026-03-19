@@ -67,6 +67,20 @@ export default function UsersPage() {
     fetchUsers();
   }
 
+  async function handleDelete(u: User) {
+    if (!confirm(`Ta bort ${u.name}? Detta kan inte ångras.`)) return;
+    try {
+      const res = await fetch(`/api/admin/users?id=${u.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json();
+        alert(data.error || "Kunde inte ta bort användare");
+      }
+    } catch {
+      alert("Något gick fel");
+    }
+    fetchUsers();
+  }
+
   if (admin?.role !== "admin") {
     return (
       <AppShell>
@@ -188,16 +202,26 @@ export default function UsersPage() {
                         <div className="text-sm text-slate-500 mt-0.5 truncate">{u.email}</div>
                       </div>
                     </Link>
-                    <button
-                      onClick={() => toggleActive(u)}
-                      className={`text-xs px-3 py-1.5 rounded-full font-semibold transition-colors flex-shrink-0 ml-3 ${
-                        u.is_active
-                          ? "bg-green-50 text-green-700 hover:bg-green-100 border border-green-200"
-                          : "bg-slate-100 text-slate-500 hover:bg-slate-200 border border-slate-200"
-                      }`}
-                    >
-                      {u.is_active ? "Aktiv" : "Inaktiv"}
-                    </button>
+                    <div className="flex items-center gap-2 flex-shrink-0 ml-3">
+                      <button
+                        onClick={() => toggleActive(u)}
+                        className={`text-xs px-3 py-1.5 rounded-full font-semibold transition-colors ${
+                          u.is_active
+                            ? "bg-green-50 text-green-700 hover:bg-green-100 border border-green-200"
+                            : "bg-slate-100 text-slate-500 hover:bg-slate-200 border border-slate-200"
+                        }`}
+                      >
+                        {u.is_active ? "Aktiv" : "Inaktiv"}
+                      </button>
+                      {u.id !== admin?.id && (
+                        <button
+                          onClick={() => handleDelete(u)}
+                          className="text-xs px-3 py-1.5 rounded-full font-semibold bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 transition-colors"
+                        >
+                          Ta bort
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               );
