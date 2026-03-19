@@ -14,6 +14,7 @@ export default function UsersPage() {
   const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState("");
   const [newEmail, setNewEmail] = useState("");
+  const [newPassword, setNewPassword] = useState("");
   const [newRole, setNewRole] = useState<"worker" | "admin">("worker");
   const [saving, setSaving] = useState(false);
 
@@ -39,13 +40,14 @@ export default function UsersPage() {
       await fetch("/api/admin/users", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newName, email: newEmail, role: newRole }),
+        body: JSON.stringify({ name: newName, email: newEmail, password: newPassword, role: newRole }),
       });
     } catch {
       // Handle error
     }
     setNewName("");
     setNewEmail("");
+    setNewPassword("");
     setNewRole("worker");
     setShowAdd(false);
     setSaving(false);
@@ -109,6 +111,16 @@ export default function UsersPage() {
                 onChange={(e) => setNewEmail(e.target.value)}
                 className="w-full px-4 py-3 rounded-xl border border-slate-300 text-base focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all duration-200"
                 placeholder="namn@email.se"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-600 mb-1">Lösenord</label>
+              <input
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                className="w-full px-4 py-3 rounded-xl border border-slate-300 text-base focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all duration-200"
+                placeholder="Minst 6 tecken"
               />
             </div>
             <div>
