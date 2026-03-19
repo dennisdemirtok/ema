@@ -42,6 +42,29 @@ def generate_result_pdf(input_path: str, output_path: str, rooms: list,
         for kr in korridor_rooms[1:]:
             rooms.remove(kr)
 
+    # ── Post-process: extend Pausrum bottom to match adjacent rooms ──
+    pausrum = [r for r in rooms if r.name and 'pausrum' in r.name.lower()]
+    if pausrum:
+        pr = pausrum[0]
+        pp = pr.polygon_pts
+        pr_x0, pr_y0 = pp[0]
+        pr_x1, pr_y1 = pp[2]
+        # Find max bottom edge of ADJACENT rooms within Pausrum's x-range
+        # Only rooms whose top is above Pausrum's current bottom (adjacent, not far below)
+        max_bottom = pr_y1
+        for r in rooms:
+            if r is pr:
+                continue
+            rp = r.polygon_pts
+            rx0, ry0 = rp[0]
+            rx1, ry1 = rp[2]
+            # Room overlaps Pausrum horizontally AND is adjacent (top within 30pt of Pausrum bottom)
+            if rx1 > pr_x0 and rx0 < pr_x1 and ry0 < pr_y1 + 30 and ry1 > max_bottom and ry1 < pr_y1 + 50:
+                max_bottom = ry1
+        if max_bottom > pr_y1:
+            pr.polygon_pts = [(pr_x0, pr_y0), (pr_x1, pr_y0),
+                              (pr_x1, max_bottom), (pr_x0, max_bottom)]
+
     # ── Draw ONLY the measured room rectangles ──
     # ONE shape = single fill layer, no double-opacity
     fill = page.new_shape()
